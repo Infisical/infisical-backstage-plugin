@@ -3,10 +3,8 @@ kind: Component
 metadata:
   name: backstage
   description: An example of a Backstage application.
-  # Example for optional annotations
-  # annotations:
-  #   github.com/project-slug: backstage/backstage
-  #   backstage.io/techdocs-ref: dir:.
+  annotations:
+    infisical/project: 475a0b3f-92e9-43bd-8e82-e7e92ce93235
 spec:
   type: website
   owner: john@example.com

@@ -1,0 +1,1 @@
+export { EntityInfisicalContent } from './EntityInfisicalContent';

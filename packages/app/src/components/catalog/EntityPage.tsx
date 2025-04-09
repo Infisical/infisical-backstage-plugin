@@ -58,6 +58,7 @@ import {
   EntityKubernetesContent,
   isKubernetesAvailable,
 } from '@backstage/plugin-kubernetes';
+import { EntityInfisicalContent } from '@backstage/plugin-infisical';
 
 const techdocsContent = (
   <EntityTechdocsContent>
@@ -188,6 +189,10 @@ const serviceEntityPage = (
     <EntityLayout.Route path="/docs" title="Docs">
       {techdocsContent}
     </EntityLayout.Route>
+
+    <EntityLayout.Route path="/infisical" title="Infisical">
+      <EntityInfisicalContent />
+    </EntityLayout.Route>
   </EntityLayout>
 );
 
@@ -222,6 +227,10 @@ const websiteEntityPage = (
 
     <EntityLayout.Route path="/docs" title="Docs">
       {techdocsContent}
+    </EntityLayout.Route>
+
+    <EntityLayout.Route path="/infisical" title="Infisical">
+      <EntityInfisicalContent />
     </EntityLayout.Route>
   </EntityLayout>
 );

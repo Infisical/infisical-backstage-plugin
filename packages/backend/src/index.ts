@@ -7,6 +7,7 @@
  */
 
 import { createBackend } from '@backstage/backend-defaults';
+import { infisicalPlugin } from '@backstage/plugin-infisical-backend';
 
 const backend = createBackend();
 
@@ -52,4 +53,5 @@ backend.add(import('@backstage/plugin-search-backend-module-techdocs'));
 // kubernetes
 backend.add(import('@backstage/plugin-kubernetes-backend'));
 
+backend.add(infisicalPlugin);
 backend.start();

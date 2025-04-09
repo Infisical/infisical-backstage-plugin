@@ -12,6 +12,8 @@ apiVersion: backstage.io/v1alpha1
 kind: Component
 metadata:
   name: example-website
+  annotations:
+    infisical/project: 475a0b3f-92e9-43bd-8e82-e7e92ce93235
 spec:
   type: website
   lifecycle: experimental

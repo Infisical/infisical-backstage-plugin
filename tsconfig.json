@@ -7,7 +7,7 @@
     "plugins/*/config.d.ts",
     "plugins/*/dev",
     "plugins/*/migrations"
-  ],
+, "plugins/infisical/mocks.ts"  ],
   "exclude": ["node_modules"],
   "compilerOptions": {
     "outDir": "dist-types",
