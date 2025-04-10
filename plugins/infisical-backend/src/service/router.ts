@@ -147,7 +147,7 @@ export async function createRouter(
    *   secretValue - The new value of the secret (required)
    *   workspaceId - The workspace ID (required)
    */
-  router.put('/secrets/:secretId', async (request, response) => {
+  router.patch('/secrets/:secretId', async (request, response) => {
     const { secretId } = request.params;
     const secretData = request.body as InfisicalSecretUpdateRequest;
 

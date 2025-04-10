@@ -133,23 +133,24 @@ export class InfisicalApiClient {
       const infisicalConfig = config.getConfig('infisical');
 
       // Check for API token auth
-      if (infisicalConfig.has('authentication.apiToken')) {
+      if (infisicalConfig.has('authentication.auth_token')) {
         return {
           type: 'api-token',
-          apiToken: infisicalConfig.getString('authentication.apiToken'),
+          apiToken: infisicalConfig.getString(
+            'authentication.auth_token.token',
+          ),
         };
       }
 
       // Check for client credentials auth
-      if (
-        infisicalConfig.has('authentication.clientId') &&
-        infisicalConfig.has('authentication.clientSecret')
-      ) {
+      if (infisicalConfig.has('authentication.universalAuth')) {
         return {
           type: 'client-credentials',
-          clientId: infisicalConfig.getString('authentication.clientId'),
+          clientId: infisicalConfig.getString(
+            'authentication.universalAuth.clientId',
+          ),
           clientSecret: infisicalConfig.getString(
-            'authentication.clientSecret',
+            'authentication.universalAuth.clientSecret',
           ),
         };
       }
@@ -491,7 +492,6 @@ export class InfisicalApiClient {
           workspaceId,
           environment,
           include_imports: 'true',
-          expandSecretReferences: 'true',
           secretPath: path,
           viewSecretValue: 'false',
         },
@@ -505,7 +505,6 @@ export class InfisicalApiClient {
           workspaceId,
           environment,
           include_imports: 'true',
-          expandSecretReferences: 'true',
           path,
         },
       });
@@ -561,7 +560,6 @@ export class InfisicalApiClient {
         workspaceId,
         environment: options?.environment,
         secretPath: options?.path,
-        expandSecretReferences: 'true',
         include_imports: 'true',
       },
     });
@@ -580,20 +578,20 @@ export class InfisicalApiClient {
     secretData: InfisicalSecretCreateRequest,
   ): Promise<InfisicalSecret> {
     this.logger.info(
-      `Creating secret ${secretData.key} in Infisical (workspace: ${secretData.workspaceId})`,
+      `Creating secret ${secretData.secretKey} in Infisical (workspace: ${secretData.workspaceId})`,
     );
 
     try {
       const response = await this.makeRequest<InfisicalSecretResponse>({
         method: 'POST',
-        path: `/v3/secrets/raw/${secretData.key}`,
+        path: `/v3/secrets/raw/${secretData.secretKey}`,
         body: secretData,
       });
 
-      this.logger.info(`Successfully created secret ${secretData.key}`);
+      this.logger.info(`Successfully created secret ${secretData.secretKey}`);
       return response.secret;
     } catch (error) {
-      this.logger.error(`Failed to create secret ${secretData.key}: ${error}`);
+      this.logger.error(`Failed to create secret ${secretData.secretKey}: ${error}`);
       throw error;
     }
   }
@@ -615,11 +613,11 @@ export class InfisicalApiClient {
     try {
       const response = await this.makeRequest<InfisicalSecretResponse>({
         method: 'PATCH',
-        path: `/v3/secrets/raw/${secretData.key}`,
+        path: `/v3/secrets/raw/${secretData.secretKey}`,
         body: secretData,
       });
 
-      this.logger.info(`Successfully updated secret ${secretData.key}`);
+      this.logger.info(`Successfully updated secret ${secretData.secretKey}`);
       return response.secret;
     } catch (error) {
       this.logger.error(`Failed to update secret ${secretData.key}: ${error}`);

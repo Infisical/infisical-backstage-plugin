@@ -308,7 +308,7 @@ export class InfisicalClient implements InfisicalApi {
     const response = await this.fetchApi.fetch(
       `${baseUrl}/secrets/${encodeURIComponent(secretId)}`,
       {
-        method: 'PUT',
+        method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
         },

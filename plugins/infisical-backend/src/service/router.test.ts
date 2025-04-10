@@ -76,7 +76,7 @@ describe('infisical router', () => {
     it('returns secrets when valid workspaceId is provided', async () => {
       const mockSecrets = {
         secrets: [
-          { id: 'secret1', key: 'API_KEY', value: 'test-value' },
+          { id: 'secret1', secretKey: 'API_KEY', secretValue: 'test-value' },
         ] as InfisicalSecret[],
         folders: [],
       };
@@ -154,8 +154,8 @@ describe('infisical router', () => {
     it('creates a secret when valid data is provided', async () => {
       const mockSecret: InfisicalSecret = {
         id: 'secret1',
-        key: 'API_KEY',
-        value: 'test-value',
+        secretKey: 'API_KEY',
+        secretValue: 'test-value',
       };
 
       const secretData = {
@@ -204,12 +204,12 @@ describe('infisical router', () => {
     });
   });
 
-  describe('PUT /secrets/:secretId', () => {
+  describe('PATCH /secrets/:secretId', () => {
     it('updates a secret when valid data is provided', async () => {
       const mockSecret: InfisicalSecret = {
         id: 'secret1',
-        key: 'API_KEY',
-        value: 'updated-value',
+        secretKey: 'API_KEY',
+        secretValue: 'updated-value',
       };
 
       const secretData = {
@@ -223,7 +223,7 @@ describe('infisical router', () => {
       mockInfisicalApi.updateSecret.mockResolvedValueOnce(mockSecret);
 
       const response = await request(app)
-        .put('/secrets/secret1')
+        .patch('/secrets/secret1')
         .send(secretData);
 
       expect(response.status).toBe(200);
@@ -232,7 +232,7 @@ describe('infisical router', () => {
     });
 
     it('returns 400 when required fields are missing', async () => {
-      const response = await request(app).put('/secrets/secret1').send({
+      const response = await request(app).patch('/secrets/secret1').send({
         workspaceId: 'workspace123',
       });
 
@@ -243,7 +243,7 @@ describe('infisical router', () => {
     });
 
     it('returns 404 when secretId is missing in the path', async () => {
-      const response = await request(app).put('/secrets/').send({
+      const response = await request(app).patch('/secrets/').send({
         secretKey: 'API_KEY',
         secretValue: 'test-value',
         workspaceId: 'workspace123',

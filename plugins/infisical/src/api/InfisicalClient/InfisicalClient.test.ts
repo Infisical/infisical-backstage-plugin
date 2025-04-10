@@ -220,7 +220,7 @@ describe('InfisicalClient', () => {
       expect(mockFetchApi.fetch).toHaveBeenCalledWith(
         `${mockBaseUrl}/secrets/${secretId}`,
         expect.objectContaining({
-          method: 'PUT',
+          method: 'PATCH',
           headers: expect.objectContaining({
             'Content-Type': 'application/json',
           }),
