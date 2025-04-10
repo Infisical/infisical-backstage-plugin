@@ -311,7 +311,7 @@ export const EntityInfisicalSecretsContent = ({ workspaceId }: EntityInfisicalSe
           severity: 'success',
         });
       } else if (dialogMode === 'edit' && selectedSecret) {
-        await infisicalApi.updateSecret(workspaceId, selectedSecret.id, formValues, {
+        await infisicalApi.updateSecret(workspaceId, selectedSecret.secretKey, formValues, {
           path: currentPath !== '/' ? currentPath : undefined,
           environment: selectedEnvironment
         });
@@ -366,7 +366,7 @@ export const EntityInfisicalSecretsContent = ({ workspaceId }: EntityInfisicalSe
     if (!secretToDelete || !selectedEnvironment) return;
 
     try {
-      await infisicalApi.deleteSecret(workspaceId, secretToDelete.id, {
+      await infisicalApi.deleteSecret(workspaceId, secretToDelete.secretKey, {
         path: currentPath !== '/' ? currentPath : undefined,
         environment: selectedEnvironment
       });

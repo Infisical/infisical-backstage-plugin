@@ -84,9 +84,9 @@ export interface InfisicalFoldersResponse {
  */
 export interface InfisicalSecretCreateRequest {
   /** Key/name of the secret */
-  key: string;
+  secretKey: string;
   /** Value of the secret */
-  value: string;
+  secretValue: string;
   /** Type of the secret (e.g., "shared", "personal") */
   type?: string;
   /** Optional comment about the secret */

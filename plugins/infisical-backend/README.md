@@ -30,12 +30,14 @@ infisical:
   
   # You must configure one of the following authentication methods:
   authentication:
-    # Option 1: API Token Authentication
-    apiToken: ${INFISICAL_API_TOKEN}
+    auth_token:
+      # Option 1: API Token Authentication
+      apiToken: ${INFISICAL_API_TOKEN}
     
     # Option 2: Client Credentials Authentication
-    # clientId: ${INFISICAL_CLIENT_ID}
-    # clientSecret: ${INFISICAL_CLIENT_SECRET}
+    universalAuth:
+      clientId: ${INFISICAL_CLIENT_ID}
+      clientSecret: ${INFISICAL_CLIENT_SECRET}
 ```
 
 ## Usage

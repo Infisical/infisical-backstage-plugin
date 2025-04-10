@@ -22,7 +22,9 @@ describe('InfisicalApiClient', () => {
     infisical: {
       baseUrl: 'https://test-api.example.com',
       authentication: {
-        apiToken: 'test-api-token',
+        auth_token: {
+          token: 'test-api-token',
+        },
       },
     },
   });
@@ -31,8 +33,10 @@ describe('InfisicalApiClient', () => {
     infisical: {
       baseUrl: 'https://test-api.example.com',
       authentication: {
-        clientId: 'test-client-id',
-        clientSecret: 'test-client-secret',
+        universalAuth: {
+            clientId: 'test-client-id',
+            clientSecret: 'test-client-secret',
+        }
       },
     },
   });
