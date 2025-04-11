@@ -13,11 +13,11 @@ This plugin provides integration between [Backstage](https://backstage.io) and [
 
 ## Installation
 
-This plugin is published as `@backstage/plugin-infisical-backend`. To install it in your Backstage backend, run:
+This plugin is published as `@infisical/backstage-backend-plugin-infisical`. To install it in your Backstage backend, run:
 
 ```bash
 # From your Backstage root directory
-yarn --cwd packages/backend add @backstage/plugin-infisical-backend
+yarn --cwd packages/backend add @infisical/backstage-backend-plugin-infisical
 ```
 
 ## Configuration
@@ -50,7 +50,7 @@ import { createBackend } from '@backstage/backend-defaults';
 const backend = createBackend();
 
 // ... other plugins
-backend.add(import('@backstage/plugin-infisical-backend'));
+backend.add(import('@infisical/backstage-backend-plugin-infisical'));
 
 backend.start();
 ```

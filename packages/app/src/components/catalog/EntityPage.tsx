@@ -58,7 +58,7 @@ import {
   EntityKubernetesContent,
   isKubernetesAvailable,
 } from '@backstage/plugin-kubernetes';
-import { EntityInfisicalContent } from '@backstage/plugin-infisical';
+import { EntityInfisicalContent } from '@infisical/backstage-plugin-infisical';
 
 const techdocsContent = (
   <EntityTechdocsContent>

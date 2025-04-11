@@ -18,14 +18,14 @@ A comprehensive Backstage plugin suite that integrates with [Infisical](https://
 
 ```bash
 # From your Backstage root directory
-yarn --cwd packages/app add @backstage/plugin-infisical
+yarn --cwd packages/app add @infisical/backstage-plugin-infisical
 ```
 
 ### Backend Plugin
 
 ```bash
 # From your Backstage root directory
-yarn --cwd packages/backend add @backstage/plugin-infisical-backend
+yarn --cwd packages/backend add @infisical/backstage-backend-plugin-infisical
 ```
 
 ## Configuration
@@ -58,7 +58,7 @@ import { createBackend } from '@backstage/backend-defaults';
 const backend = createBackend();
 
 // ... other plugins
-backend.add(import('@backstage/plugin-infisical-backend'));
+backend.add(import('@infisical/backstage-backend-plugin-infisical'));
 
 backend.start();
 ```
@@ -68,7 +68,7 @@ backend.start();
 1. Add the plugin to your Backstage application by modifying your `packages/app/src/App.tsx`:
 
 ```tsx
-import { infisicalPlugin } from '@backstage/plugin-infisical';
+import { infisicalPlugin } from '@infisical/backstage-plugin-infisical';
 
 const app = createApp({
   // ... other configuration
@@ -82,7 +82,7 @@ const app = createApp({
 2. Add the Infisical tab to your entity page in `packages/app/src/components/catalog/EntityPage.tsx`:
 
 ```tsx
-import { EntityInfisicalContent } from '@backstage/plugin-infisical';
+import { EntityInfisicalContent } from '@infisical/backstage-plugin-infisical';
 
 // Add to the service entity page:
 const serviceEntityPage = (

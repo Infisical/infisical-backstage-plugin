@@ -15,7 +15,7 @@ A plugin for [Backstage](https://backstage.io) that integrates with [Infisical](
 
 ```bash
 # From your Backstage root directory
-yarn add --cwd packages/app @backstage/plugin-infisical
+yarn add --cwd packages/app @infisical/backstage-plugin-infisical
 ```
 
 ### Backend plugin
@@ -28,7 +28,7 @@ This frontend plugin requires the corresponding backend plugin to be installed. 
 1. Add the plugin to your Backstage application by modifying your `packages/app/src/App.tsx`:
 
 ```tsx
-import { infisicalPlugin } from '@backstage/plugin-infisical';
+import { infisicalPlugin } from '@infisical/backstage-plugin-infisical';
 
 const app = createApp({
   // ... other configuration
@@ -42,7 +42,7 @@ const app = createApp({
 2. Add the Infisical tab to your entity page in `packages/app/src/components/catalog/EntityPage.tsx`:
 
 ```tsx
-import { EntityInfisicalContent } from '@backstage/plugin-infisical';
+import { EntityInfisicalContent } from '@infisical/backstage-plugin-infisical';
 
 // Add to the service entity page:
 const serviceEntityPage = (

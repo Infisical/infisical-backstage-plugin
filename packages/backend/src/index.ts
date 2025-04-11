@@ -7,7 +7,7 @@
  */
 
 import { createBackend } from '@backstage/backend-defaults';
-import { infisicalPlugin } from '@backstage/plugin-infisical-backend';
+import { infisicalPlugin } from '@infisical/backstage-backend-plugin-infisical';
 
 const backend = createBackend();
 
