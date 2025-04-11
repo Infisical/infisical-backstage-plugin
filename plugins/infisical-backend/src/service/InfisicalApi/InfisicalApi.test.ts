@@ -1,6 +1,6 @@
 import { ConfigReader } from '@backstage/config';
 import { getVoidLogger } from '@backstage/backend-common';
-import { InfisicalApiClient } from '../infisicalApi';
+import { InfisicalApiClient } from '../InfisicalApi';
 import { NotFoundError } from '@backstage/errors';
 
 global.fetch = jest.fn();
@@ -69,9 +69,8 @@ describe('InfisicalApiClient', () => {
         },
       });
       let error: Error | null = null;
-      let apiClientFail: InfisicalApiClient | null = null;
       try {
-        apiClientFail = new InfisicalApiClient({
+        new InfisicalApiClient({
           config: invalidConfig,
           logger,
         });
@@ -257,8 +256,8 @@ describe('InfisicalApiClient', () => {
 
     it('should create a secret', async () => {
       const secretData = {
-        key: 'NEW_API_KEY',
-        value: 'new-test-value',
+        secretKey: 'NEW_API_KEY',
+        secretValue: 'new-test-value',
         workspaceId: 'workspace123',
         secretPath: '/api',
         environment: 'dev',
@@ -301,8 +300,8 @@ describe('InfisicalApiClient', () => {
 
     it('should update a secret', async () => {
       const secretData = {
-        key: 'EXISTING_API_KEY',
-        value: 'updated-value',
+        secretKey: 'EXISTING_API_KEY',
+        secretValue: 'updated-value',
         workspaceId: 'workspace123',
         secretPath: '/api',
         environment: 'dev',

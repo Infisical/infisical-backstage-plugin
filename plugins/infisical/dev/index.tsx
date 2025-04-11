@@ -4,8 +4,7 @@
 
 import React from 'react';
 import { createDevApp } from '@backstage/dev-utils';
-import { TestApiProvider, MockEntityProvider } from '@backstage/test-utils';
-import { EntityProvider } from '@backstage/plugin-catalog-react';
+import { TestApiProvider } from '@backstage/test-utils';
 import { Entity } from '@backstage/catalog-model';
 import { Grid } from '@material-ui/core';
 import {
@@ -13,13 +12,13 @@ import {
   EntityInfisicalContent,
   infisicalApiRef
 } from '../src/plugin';
-import { InfisicalClient } from '../src/api/InfisicalClient/InfisicalClient';
 import {
   InfisicalSecret,
   InfisicalFolder,
   InfisicalEnvironment,
   InfisicalWorkspace
 } from '../src/api/types';
+import { EntityProvider } from '@backstage/plugin-catalog-react/*';
 
 // Mock entity with Infisical annotation
 const mockEntity: Entity = {
@@ -89,7 +88,7 @@ const mockClient = {
     secrets: mockSecrets,
     folders: mockFolders,
   }),
-  createSecret: async (workspaceId: string, secretData: any) => ({
+  createSecret: async (secretData: any) => ({
     ...secretData,
     id: `generated-id-${Date.now()}`,
     createdAt: new Date().toISOString(),
@@ -99,7 +98,7 @@ const mockClient = {
     key: secretData.secretKey,
     value: secretData.secretValue
   }),
-  updateSecret: async (workspaceId: string, secretId: string, secretData: any) => ({
+  updateSecret: async (secretId: string, secretData: any) => ({
     ...secretData,
     id: secretId,
     updatedAt: new Date().toISOString(),
@@ -120,9 +119,9 @@ createDevApp()
       >
         <Grid container spacing={3}>
           <Grid item xs={12}>
-            <MockEntityProvider entity={mockEntity}>
+            <EntityProvider entity={mockEntity}>
               <EntityInfisicalContent />
-            </MockEntityProvider>
+            </EntityProvider>
           </Grid>
         </Grid>
       </TestApiProvider>

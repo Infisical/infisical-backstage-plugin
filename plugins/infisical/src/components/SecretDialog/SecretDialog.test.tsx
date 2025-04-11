@@ -73,6 +73,7 @@ describe('SecretDialog', () => {
         mode="create"
         onClose={mockOnClose}
         onSave={mockOnSave}
+        fetchSecretValue={jest.fn()}
       />
     );
 
@@ -96,6 +97,7 @@ describe('SecretDialog', () => {
         mode="create"
         onClose={mockOnClose}
         onSave={mockOnSave}
+        fetchSecretValue={jest.fn()}
       />
     );
 
@@ -130,6 +132,7 @@ describe('SecretDialog', () => {
         mode="create"
         onClose={mockOnClose}
         onSave={mockOnSaveWithError}
+        fetchSecretValue={jest.fn()}
       />
     );
 
@@ -156,6 +159,7 @@ describe('SecretDialog', () => {
         mode="create"
         onClose={mockOnClose}
         onSave={mockOnSave}
+        fetchSecretValue={jest.fn()}
       />
     );
 

@@ -1,13 +1,11 @@
 import {
   NotFoundError,
   ConflictError,
-  InputError,
-  ResponseError,
+  InputError
 } from '@backstage/errors';
 import { Config } from '@backstage/config';
 import { Logger } from 'winston';
 import {
-  InfisicalEnvironment,
   InfisicalFoldersResponse,
   InfisicalProject,
   InfisicalSecret,
@@ -16,7 +14,7 @@ import {
   InfisicalSecretsResponse,
   InfisicalSecretUpdateRequest,
   InfisicalSecretDeleteRequest,
-  AuthTokenResponse,
+  AuthTokenResponse
 } from '../types';
 
 /**

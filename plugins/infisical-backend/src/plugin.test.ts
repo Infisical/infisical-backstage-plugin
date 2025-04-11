@@ -1,6 +1,5 @@
-import { mockServices, startTestBackend } from '@backstage/backend-test-utils';
+import { startTestBackend } from '@backstage/backend-test-utils';
 import { infisicalPlugin } from './plugin';
-import { ConfigReader } from '@backstage/config';
 
 jest.mock('./service/infisicalApi', () => {
   const mockClient = {
@@ -17,23 +16,10 @@ jest.mock('./service/infisicalApi', () => {
 });
 
 describe('infisical-backend', () => {
-  const mockConfig = new ConfigReader({
-    infisical: {
-      baseUrl: 'https://test-api.example.com',
-      authentication: {
-        token: 'test-api-token',
-      },
-    },
-  });
-
   it('should register routes', async () => {
     try {
       const backend = await startTestBackend({
-        features: [infisicalPlugin],
-        services: [
-          mockServices.rootConfig.factory({ data: mockConfig.get() }),
-          mockServices.logger.factory(),
-        ],
+        features: [infisicalPlugin]
       });
 
       expect(backend).toBeDefined();

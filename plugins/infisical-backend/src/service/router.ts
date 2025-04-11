@@ -4,7 +4,7 @@ import Router from 'express-promise-router';
 import { Logger } from 'winston';
 import { Config } from '@backstage/config';
 import { InfisicalApiClient } from './InfisicalApi';
-import { InputError, NotFoundError } from '@backstage/errors';
+import { InputError } from '@backstage/errors';
 import {
   InfisicalSecretCreateRequest,
   InfisicalSecretUpdateRequest,

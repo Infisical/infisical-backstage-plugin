@@ -95,8 +95,7 @@ export function createMockInfisicalApi(): InfisicalApi {
 
     createSecret: async (
       workspaceId: string,
-      secretData: InfisicalSecretFormValues,
-      options?: { path?: string; environment?: string },
+      secretData: InfisicalSecretFormValues
     ): Promise<InfisicalSecret> => {
       if (!workspaceId) {
         throw new Error('No workspace ID provided');
@@ -120,8 +119,7 @@ export function createMockInfisicalApi(): InfisicalApi {
     updateSecret: async (
       workspaceId: string,
       secretId: string,
-      secretData: InfisicalSecretFormValues,
-      options?: { path?: string; environment?: string },
+      secretData: InfisicalSecretFormValues
     ): Promise<InfisicalSecret> => {
       if (!workspaceId) {
         throw new Error('No workspace ID provided');
@@ -161,8 +159,7 @@ export function createMockInfisicalApi(): InfisicalApi {
 
     deleteSecret: async (
       workspaceId: string,
-      secretId: string,
-      options?: { path?: string; environment?: string },
+      secretId: string
     ): Promise<void> => {
       if (!workspaceId) {
         throw new Error('No workspace ID provided');
@@ -173,6 +170,27 @@ export function createMockInfisicalApi(): InfisicalApi {
 
       // Mock a delay
       await new Promise(resolve => setTimeout(resolve, 500));
+    },
+
+    getSecretByKey: async (
+      workspaceId: string,
+      secretKey: string
+    ): Promise<InfisicalSecret> => {
+      if (!workspaceId) {
+        throw new Error('No workspace ID provided');
+      }
+
+      // Find the secret by key
+      const secret = secrets.find(s => s.key === secretKey);
+
+      // Mock a delay
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      if (!secret) {
+        throw new Error('Secret not found');
+      }
+
+      return secret;
     },
   };
 }

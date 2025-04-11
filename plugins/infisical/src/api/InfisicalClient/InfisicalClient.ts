@@ -29,6 +29,7 @@ export const infisicalApiRef = createApiRef<InfisicalApi>({
 export interface InfisicalOptions {
   path?: string;
   environment?: string;
+  viewSecretValue?: boolean;
 }
 
 /**
@@ -44,7 +45,7 @@ export interface GetSecretsResponse {
  */
 export interface GetEnvironmentsResponse {
   environments: InfisicalEnvironment[];
-  project: string;
+  name?: string;
 }
 
 /**

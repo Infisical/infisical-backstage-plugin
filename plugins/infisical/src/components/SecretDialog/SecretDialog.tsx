@@ -46,7 +46,7 @@ export interface SecretDialogProps {
     /** Callback when secret is saved */
     onSave: (formData: InfisicalSecretFormValues) => Promise<void>;
     /** Function to fetch secret value */
-    fetchSecretValue: (secretId: string, secretKey: string) => Promise<InfisicalSecret>;
+    fetchSecretValue: (secretId: string, secretKey: string) => Promise<InfisicalSecret | null | undefined>;
 }
 
 /**
@@ -68,6 +68,10 @@ export const SecretDialog: React.FC<SecretDialogProps> = ({
         if (open && secret && secret.secretValue === "<hidden-by-infisical>") {
             setIsLoading(true);
             fetchSecretValue(secret.id, secret.secretKey).then((secretResponse) => {
+                if (!secretResponse) {
+                    setError('Secret not found');
+                    return;
+                }
                 setFormValues({
                     secretKey: secretResponse.secretKey,
                     secretValue: secretResponse.secretValue,

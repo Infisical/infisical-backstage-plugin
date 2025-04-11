@@ -3,9 +3,8 @@
  */
 
 import { InfisicalClient } from './InfisicalClient';
-import { InfisicalSecretFormValues } from './types';
+import { InfisicalSecretFormValues } from '../types';
 import { UrlPatternDiscovery } from '@backstage/core-app-api';
-import { fetchApiRef } from '@backstage/core-plugin-api';
 
 describe('InfisicalClient', () => {
   const mockBaseUrl = 'http://localhost:7007/api/infisical-backend';

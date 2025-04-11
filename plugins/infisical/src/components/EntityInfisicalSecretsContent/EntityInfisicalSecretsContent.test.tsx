@@ -3,12 +3,14 @@
  */
 
 import React from 'react';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { EntityInfisicalSecretsContent } from './EntityInfisicalSecretsContent';
-import { InfisicalSecret, InfisicalFolder, InfisicalEnvironment } from '../../api/types';
+import { InfisicalSecret, InfisicalFolder, InfisicalEnvironment, InfisicalSecretFormValues } from '../../api/types';
 import { infisicalApiRef } from '../../api/InfisicalClient';
-import { alertApiRef, errorApiRef } from '@backstage/core-plugin-api';
+import { alertApiRef, ErrorApiError, errorApiRef } from '@backstage/core-plugin-api';
 import { TestApiProvider } from '@backstage/test-utils';
+import { DialogMode } from '../SecretDialog';
+import { TableColumn } from '@backstage/core-components';
 
 // Mock the Progress, ErrorPanel, EmptyState and Table components
 jest.mock('@backstage/core-components', () => {
@@ -16,35 +18,35 @@ jest.mock('@backstage/core-components', () => {
     return {
         ...actual,
         Progress: () => <div data-testid="progress">Loading...</div>,
-        ErrorPanel: ({ error }) => <div data-testid="error-panel">{error.message}</div>,
-        EmptyState: ({ title, description }) => (
+        ErrorPanel: ({ error }: { error: ErrorApiError }) => <div data-testid="error-panel">{error.message}</div>,
+        EmptyState: ({ title, description }: { title: string; description: string }) => (
             <div data-testid="empty-state">
                 <h3>{title}</h3>
                 <div>{description}</div>
             </div>
         ),
-        InfoCard: ({ title, children }) => (
+        InfoCard: ({ title, children }: { title: string; children: React.ReactNode }) => (
             <div data-testid="info-card">
                 <h2>{title}</h2>
                 {children}
             </div>
         ),
-        Table: ({ data, columns }) => {
+        Table: ({ data, columns }: { data: InfisicalSecret[]; columns: TableColumn[] }) => {
             return (
                 <table data-testid="secrets-table">
                     <thead>
                         <tr>
-                            {columns.map((column, index) => (
+                            {columns.map((column: TableColumn, index: number) => (
                                 <th key={index}>{column.title}</th>
                             ))}
                         </tr>
                     </thead>
                     <tbody>
-                        {data.map((item, rowIndex) => (
+                        {data.map((item: InfisicalSecret, rowIndex: number) => (
                             <tr key={rowIndex} data-testid="table-row">
-                                {columns.map((column, colIndex) => (
+                                {columns.map((column: TableColumn, colIndex: number) => (
                                     <td key={colIndex} data-testid={`cell-${column.field || column.title}`}>
-                                        {column.render ? column.render(item) : item[column.field]}
+                                        {column.render ? column.render(item, 'row') : (column.field ? item[column.field as keyof typeof item] : '')}
                                     </td>
                                 ))}
                             </tr>
@@ -61,17 +63,17 @@ jest.mock('@material-ui/core', () => {
     const actual = jest.requireActual('@material-ui/core');
     return {
         ...actual,
-        Dialog: ({ children, open }) => (open ? <div data-testid="dialog">{children}</div> : null),
-        DialogTitle: ({ children }) => <div data-testid="dialog-title">{children}</div>,
-        DialogContent: ({ children }) => <div data-testid="dialog-content">{children}</div>,
-        DialogContentText: ({ children }) => <div data-testid="dialog-content-text">{children}</div>,
-        DialogActions: ({ children }) => <div data-testid="dialog-actions">{children}</div>,
+        Dialog: ({ children, open }: { children: React.ReactNode, open: boolean }) => (open ? <div data-testid="dialog">{children}</div> : null),
+        DialogTitle: ({ children }: { children: React.ReactNode }) => <div data-testid="dialog-title">{children}</div>,
+        DialogContent: ({ children }: { children: React.ReactNode }) => <div data-testid="dialog-content">{children}</div>,
+        DialogContentText: ({ children }: { children: React.ReactNode }) => <div data-testid="dialog-content-text">{children}</div>,
+        DialogActions: ({ children }: { children: React.ReactNode }) => <div data-testid="dialog-actions">{children}</div>,
     };
 });
 
 // Mock SecretDialog component
 jest.mock('../SecretDialog', () => ({
-    SecretDialog: ({ open, mode, secret, onClose, onSave }) => (
+    SecretDialog: ({ open, mode, secret, onClose, onSave }: { open: boolean, mode: DialogMode, secret: InfisicalSecret, onClose: () => void, onSave: (secret: InfisicalSecretFormValues) => void }) => (
         open ? (
             <div data-testid="secret-dialog" data-mode={mode}>
                 <div data-testid="secret-data">
@@ -130,7 +132,7 @@ describe('EntityInfisicalSecretsContent', () => {
             secrets: mockSecrets,
             folders: mockFolders
         }),
-        createSecret: jest.fn().mockImplementation((workspaceId, secretData) =>
+        createSecret: jest.fn().mockImplementation((secretData) =>
             Promise.resolve({
                 id: 'new-secret-id',
                 key: secretData.secretKey,
@@ -160,10 +162,10 @@ describe('EntityInfisicalSecretsContent', () => {
     };
 
     const apis = [
-        [infisicalApiRef, mockInfisicalApi],
-        [alertApiRef, mockAlertApi],
-        [errorApiRef, mockErrorApi],
-    ];
+        [infisicalApiRef, mockInfisicalApi] as const,
+        [alertApiRef, mockAlertApi] as const,
+        [errorApiRef, mockErrorApi] as const,
+    ] as const;
 
     beforeEach(() => {
         jest.clearAllMocks();

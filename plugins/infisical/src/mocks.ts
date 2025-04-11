@@ -7,7 +7,7 @@ import {
   InfisicalFolder,
   InfisicalEnvironment,
   InfisicalWorkspace,
-} from './src/api/types';
+} from './api/types';
 
 /**
  * Mock workspaces for testing

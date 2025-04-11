@@ -20,7 +20,6 @@ import {
   Select,
   MenuItem,
   FormControl,
-  Tooltip,
   CircularProgress,
 } from '@material-ui/core';
 import AddIcon from '@material-ui/icons/Add';
@@ -43,7 +42,7 @@ import {
   ErrorPanel,
   InfoCard,
 } from '@backstage/core-components';
-import { useApi, alertApiRef, errorApiRef } from '@backstage/core-plugin-api';
+import { useApi, alertApiRef, errorApiRef, ErrorApiError } from '@backstage/core-plugin-api';
 import { infisicalApiRef } from '../../api/InfisicalClient/InfisicalClient';
 import { InfisicalSecret, InfisicalSecretFormValues, InfisicalFolder, InfisicalEnvironment } from '../../api/types';
 import { SecretDialog, DialogMode } from '../SecretDialog';
@@ -201,6 +200,7 @@ type TableItem = (InfisicalSecret | InfisicalFolder) & {
   secretValue?: string;
   secretComment?: string;
   name?: string;
+  readonly?: boolean;
 };
 
 /**
@@ -247,7 +247,7 @@ export const EntityInfisicalSecretsContent = ({ workspaceId }: EntityInfisicalSe
         setLoadingEnvironments(true);
         const { environments: envs, name } = await infisicalApi.getEnvironments(workspaceId);
         setEnvironments(envs);
-        setCardTitle(name);
+        setCardTitle(name || '');
 
         if (envs.length > 0) {
           setSelectedEnvironment(envs[0].slug);
@@ -255,7 +255,7 @@ export const EntityInfisicalSecretsContent = ({ workspaceId }: EntityInfisicalSe
 
         setLoadingEnvironments(false);
       } catch (err) {
-        errorApi.post(err);
+        errorApi.post(err as ErrorApiError);
         setLoadingEnvironments(false);
       }
     };
@@ -278,7 +278,7 @@ export const EntityInfisicalSecretsContent = ({ workspaceId }: EntityInfisicalSe
   useEffect(() => {
     if (selectedEnvironment) {
       fetchSecrets().catch(err => {
-        errorApi.post(err);
+        errorApi.post(err as ErrorApiError);
       });
 
       setSecretValues({});
@@ -337,7 +337,7 @@ export const EntityInfisicalSecretsContent = ({ workspaceId }: EntityInfisicalSe
         });
       }
     } catch (err) {
-      errorApi.post(err);
+      errorApi.post(err as ErrorApiError);
       throw err;
     }
   }, [
@@ -394,7 +394,7 @@ export const EntityInfisicalSecretsContent = ({ workspaceId }: EntityInfisicalSe
         return newValues;
       });
     } catch (err) {
-      errorApi.post(err);
+      errorApi.post(err as ErrorApiError);
     } finally {
       handleCloseDeleteDialog();
     }
@@ -418,16 +418,20 @@ export const EntityInfisicalSecretsContent = ({ workspaceId }: EntityInfisicalSe
       [secretId]: true,
     }));
 
-    let secret;
+    let secret: InfisicalSecret | null = null;
     try {
       secret = await infisicalApi.getSecretByKey(workspaceId, secretKey, {
         path: currentPath !== '/' ? currentPath : undefined,
         environment: selectedEnvironment,
       });
 
+      if (!secret) {
+        return null;
+      }
+
       setSecretValues(prev => ({
         ...prev,
-        [secretId]: secret.secretValue,
+        [secretId]: secret!.secretValue,
       }));
 
       setVisibleValues(prev => ({
@@ -435,7 +439,6 @@ export const EntityInfisicalSecretsContent = ({ workspaceId }: EntityInfisicalSe
         [secretId]: true,
       }));
     } catch (err) {
-      errorApi.post(err);
       alertApi.post({
         message: 'Failed to load secret value',
         severity: 'error',
@@ -445,7 +448,6 @@ export const EntityInfisicalSecretsContent = ({ workspaceId }: EntityInfisicalSe
         ...prev,
         [secretId]: false,
       }));
-
       return secret;
     }
   }, [
@@ -457,7 +459,9 @@ export const EntityInfisicalSecretsContent = ({ workspaceId }: EntityInfisicalSe
     alertApi
   ]);
 
-  const toggleValueVisibility = useCallback((secretId: string, secretKey: string) => {
+  const toggleValueVisibility = useCallback((secretId: string, secretKey?: string) => {
+    if (!secretKey) return;
+    
     if (secretValues[secretId]) {
       setVisibleValues(prev => ({
         ...prev,
@@ -625,18 +629,18 @@ export const EntityInfisicalSecretsContent = ({ workspaceId }: EntityInfisicalSe
           return (
             <div
               className={classes.folderName}
-              onClick={() => navigateToFolder(rowData.name)}
+              onClick={() => navigateToFolder(rowData.name!)}
               role="button"
               tabIndex={0}
               onKeyPress={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
-                  navigateToFolder(rowData.name);
+                  navigateToFolder(rowData.name!);
                 }
               }}
-              aria-label={`Open ${rowData.name} folder`}
+              aria-label={`Open ${rowData.name!} folder`}
             >
               <FolderIcon className={classes.folderIcon} />
-              <Typography variant="body2">{rowData.name}</Typography>
+              <Typography variant="body2">{rowData.name!}</Typography>
             </div>
           );
         }
@@ -818,14 +822,6 @@ export const EntityInfisicalSecretsContent = ({ workspaceId }: EntityInfisicalSe
                   position: 'sticky',
                   top: 0,
                   zIndex: 1
-                },
-                toolbarProps: {
-                  style: {
-                    padding: '0px',
-                    minHeight: '0px',
-                    height: '0px',
-                    display: 'none'
-                  }
                 }
               }}
               columns={columns}

@@ -1,20 +1,21 @@
 import '@testing-library/jest-dom';
-import { TextDecoder, TextEncoder } from 'util';
-import { installGlobals } from '@backstage/backend-test-utils';
 
 jest.setTimeout(30000);
 
-global.TextEncoder = TextEncoder;
-global.TextDecoder = TextDecoder;
+if (typeof global.TextEncoder === 'undefined') {
+  const { TextEncoder } = require('util');
+  global.TextEncoder = TextEncoder;
+}
+
+if (typeof global.TextDecoder === 'undefined') {
+  const { TextDecoder } = require('util');
+  global.TextDecoder = TextDecoder as unknown as typeof global.TextDecoder;
+}
 
 const fixedTestDate = new Date('2023-01-01T12:00:00Z');
 jest
   .spyOn(global.Date, 'now')
   .mockImplementation(() => fixedTestDate.getTime());
-
-if (!global.fetch) {
-  installGlobals();
-}
 
 afterEach(() => {
   jest.resetAllMocks();

@@ -1,7 +1,6 @@
 import express from 'express';
 import request from 'supertest';
 import { createRouter } from './router';
-import * as infisicalApiModule from './infisicalApi';
 import { ConfigReader } from '@backstage/config';
 import { getVoidLogger } from '@backstage/backend-common';
 import { InfisicalSecret, InfisicalProject } from './types';
@@ -76,7 +75,7 @@ describe('infisical router', () => {
     it('returns secrets when valid workspaceId is provided', async () => {
       const mockSecrets = {
         secrets: [
-          { id: 'secret1', secretKey: 'API_KEY', secretValue: 'test-value' },
+          { id: 'secret1', key: 'API_KEY', value: 'test-value' },
         ] as InfisicalSecret[],
         folders: [],
       };
@@ -154,8 +153,8 @@ describe('infisical router', () => {
     it('creates a secret when valid data is provided', async () => {
       const mockSecret: InfisicalSecret = {
         id: 'secret1',
-        secretKey: 'API_KEY',
-        secretValue: 'test-value',
+        key: 'API_KEY',
+        value: 'test-value',
       };
 
       const secretData = {
@@ -208,8 +207,8 @@ describe('infisical router', () => {
     it('updates a secret when valid data is provided', async () => {
       const mockSecret: InfisicalSecret = {
         id: 'secret1',
-        secretKey: 'API_KEY',
-        secretValue: 'updated-value',
+        key: 'API_KEY',
+        value: 'updated-value',
       };
 
       const secretData = {
@@ -220,7 +219,7 @@ describe('infisical router', () => {
         environment: 'dev',
       };
 
-      mockInfisicalApi.updateSecret.mockResolvedValueOnce(mockSecret, 'secret1');
+      mockInfisicalApi.updateSecret.mockResolvedValueOnce(mockSecret);
 
       const response = await request(app)
         .patch('/secrets/secret1')
