@@ -10,7 +10,7 @@ import { Typography } from '@material-ui/core';
 /**
  * Annotation key for Infisical project ID
  */
-export const INFISICAL_PROJECT_ANNOTATION = 'infisical/project';
+export const INFISICAL_PROJECT_ANNOTATION = 'infisical/projectId';
 
 /**
  * Props for EntitySecretsProvider
@@ -44,12 +44,12 @@ export const EntitySecretsProvider: React.FC<EntitySecretsProviderProps> = ({
                                 This component does not have an Infisical project configured.
                             </Typography>
                             <Typography paragraph>
-                                You need to add the <code>infisical/project</code> annotation to your <code>catalog-info.yaml</code>:
+                                You need to add the <code>infisical/projectId</code> annotation to your <code>entities.yaml</code>:
                             </Typography>
                             <pre>
                                 {`metadata:
                     annotations:
-                        infisical/project: your-project-id`}
+                        infisical/projectId: your-project-id`}
                             </pre>
                         </>
                     }

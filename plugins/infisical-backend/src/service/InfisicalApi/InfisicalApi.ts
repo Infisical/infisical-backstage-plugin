@@ -157,7 +157,7 @@ export class InfisicalApiClient {
 
       // No valid auth methods found
       throw new Error(
-        'Missing Infisical Authentication credentials. Configure either apiToken or clientId+clientSecret.',
+        'Missing Infisical Authentication credentials. Configure either auth_token or universalAuth on your infisical.authentication settings.',
       );
     } catch (error) {
       if (error instanceof Error) {
@@ -605,22 +605,26 @@ export class InfisicalApiClient {
    */
   async updateSecret(
     secretData: InfisicalSecretUpdateRequest,
+    secretId: string,
   ): Promise<InfisicalSecret> {
     this.logger.info(
-      `Updating secret ${secretData.key} in Infisical (workspace: ${secretData.workspaceId})`,
+      `Updating secret ${secretId} in Infisical (workspace: ${secretData.workspaceId})`,
     );
 
     try {
       const response = await this.makeRequest<InfisicalSecretResponse>({
         method: 'PATCH',
-        path: `/v3/secrets/raw/${secretData.secretKey}`,
-        body: secretData,
+        path: `/v3/secrets/raw/${secretId}`,
+        body: {
+          ...secretData,
+          newSecretName: secretData.secretKey !== secretId ? secretData.secretKey : undefined,
+        },
       });
 
       this.logger.info(`Successfully updated secret ${secretData.secretKey}`);
       return response.secret;
     } catch (error) {
-      this.logger.error(`Failed to update secret ${secretData.key}: ${error}`);
+      this.logger.error(`Failed to update secret ${secretData.secretKey}: ${error}`);
       throw error;
     }
   }

@@ -336,7 +336,7 @@ describe('InfisicalApiClient', () => {
         }),
       );
 
-      const result = await apiClient.updateSecret(secretData);
+      const result = await apiClient.updateSecret(secretData, 'EXISTING_API_KEY');
 
       expect(result).toBeDefined();
       expect(result.id).toBe('updated-secret-id');

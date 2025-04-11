@@ -57,7 +57,7 @@ const serviceEntityPage = (
 
 ### Entity Configuration
 
-To connect an entity to its Infisical project, add the following annotation to your `catalog-info.yaml`:
+To connect an entity to its Infisical project, add the following annotation to your `entities.yaml`:
 
 ```yaml
 apiVersion: backstage.io/v1alpha1
@@ -65,7 +65,7 @@ kind: Component
 metadata:
   name: example-service
   annotations:
-    infisical/project: <your-infisical-project-id>
+    infisical/projectId: <your-infisical-project-id>
 ```
 
 Replace `<your-infisical-project-id>` with the ID of your Infisical project.

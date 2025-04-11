@@ -32,7 +32,7 @@ infisical:
   authentication:
     auth_token:
       # Option 1: API Token Authentication
-      apiToken: ${INFISICAL_API_TOKEN}
+      token: ${INFISICAL_API_TOKEN}
     
     # Option 2: Client Credentials Authentication
     universalAuth:

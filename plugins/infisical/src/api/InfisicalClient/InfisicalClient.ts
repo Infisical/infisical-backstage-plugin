@@ -148,9 +148,54 @@ export class InfisicalClient implements InfisicalApi {
   private validateWorkspaceId(workspaceId: string): void {
     if (!workspaceId) {
       throw new Error(
-        'No workspace ID provided. Set the infisical/project annotation in catalog-info.yaml',
+        'No workspace ID provided. Set the infisical/projectId annotation in entities.yaml',
       );
     }
+  }
+
+  /**
+   * Extracts detailed error information from API responses
+   */
+  private async handleApiError(response: Response): Promise<never> {
+    let errorMessage = '';
+    try {
+      const errorData = await response.json();
+
+      // Extract the most relevant message
+      if (typeof errorData === 'object') {
+        // Check for nested message in error object (most common case)
+        if (errorData.message) {
+          // Extract only the actual message without stack trace
+          const messageMatch = /^(.*?)(\n|$)/.exec(errorData.message);
+          errorMessage = messageMatch ? messageMatch[1] : errorData.message;
+        } else if (errorData.error) {
+          if (typeof errorData.error === 'object' && errorData.error.message) {
+            errorMessage = errorData.error.message;
+          } else {
+            errorMessage = String(errorData.error);
+          }
+        } else if (errorData.details) {
+          errorMessage =
+            typeof errorData.details === 'object'
+              ? JSON.stringify(errorData.details)
+              : errorData.details;
+        } else {
+          // If we can't find a specific message field, use a simplified version
+          const simplified = { ...errorData };
+          delete simplified.stack;
+          errorMessage = JSON.stringify(simplified);
+        }
+      } else if (typeof errorData === 'string') {
+        errorMessage = errorData;
+      }
+    } catch (e) {
+      // If we can't parse JSON, use the status text
+      errorMessage = response.statusText;
+    }
+
+    const error = await ResponseError.fromResponse(response);
+    error.message = errorMessage || error.message;
+    throw error;
   }
 
   /**
@@ -161,7 +206,7 @@ export class InfisicalClient implements InfisicalApi {
     const response = await this.fetchApi.fetch(`${baseUrl}/workspaces`);
 
     if (!response.ok) {
-      throw await ResponseError.fromResponse(response);
+      return this.handleApiError(response);
     }
 
     return await response.json();
@@ -179,7 +224,7 @@ export class InfisicalClient implements InfisicalApi {
     );
 
     if (!response.ok) {
-      throw await ResponseError.fromResponse(response);
+      return this.handleApiError(response);
     }
 
     return await response.json();
@@ -211,7 +256,7 @@ export class InfisicalClient implements InfisicalApi {
     );
 
     if (!response.ok) {
-      throw await ResponseError.fromResponse(response);
+      return this.handleApiError(response);
     }
 
     return await response.json();
@@ -246,7 +291,7 @@ export class InfisicalClient implements InfisicalApi {
     );
 
     if (!response.ok) {
-      throw await ResponseError.fromResponse(response);
+      return this.handleApiError(response);
     }
 
     return await response.json();
@@ -280,7 +325,7 @@ export class InfisicalClient implements InfisicalApi {
     });
 
     if (!response.ok) {
-      throw await ResponseError.fromResponse(response);
+      return this.handleApiError(response);
     }
 
     return await response.json();
@@ -317,7 +362,7 @@ export class InfisicalClient implements InfisicalApi {
     );
 
     if (!response.ok) {
-      throw await ResponseError.fromResponse(response);
+      return this.handleApiError(response);
     }
 
     return await response.json();
@@ -352,7 +397,7 @@ export class InfisicalClient implements InfisicalApi {
     );
 
     if (!response.ok) {
-      throw await ResponseError.fromResponse(response);
+      return this.handleApiError(response);
     }
   }
 }

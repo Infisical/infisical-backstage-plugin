@@ -42,7 +42,7 @@ infisical:
   authentication:
     # Option 1: API Token Authentication
     auth_token:
-      apiToken: ${INFISICAL_API_TOKEN}
+      token: ${INFISICAL_API_TOKEN}
     
     # Option 2: Client Credentials Authentication
     universalAuth:
@@ -97,7 +97,7 @@ const serviceEntityPage = (
 
 ### Entity Configuration
 
-To connect an entity to its Infisical project, add the following annotation to your `catalog-info.yaml`:
+To connect an entity to its Infisical project, add the following annotation to your `entities.yaml`:
 
 ```yaml
 apiVersion: backstage.io/v1alpha1
@@ -105,7 +105,7 @@ kind: Component
 metadata:
   name: example-service
   annotations:
-    infisical/project: <your-infisical-project-id>
+    infisical/projectId: <your-infisical-project-id>
 ```
 
 Replace `<your-infisical-project-id>` with the ID of your Infisical project.

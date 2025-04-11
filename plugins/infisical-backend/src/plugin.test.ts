@@ -21,7 +21,7 @@ describe('infisical-backend', () => {
     infisical: {
       baseUrl: 'https://test-api.example.com',
       authentication: {
-        apiToken: 'test-api-token',
+        token: 'test-api-token',
       },
     },
   });

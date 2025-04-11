@@ -39,7 +39,7 @@ entity descriptor data to consume and serve. For more information, see
 [Software Catalog Overview - Adding Components to the Catalog](https://backstage.io/docs/features/software-catalog/#adding-components-to-the-catalog).
 
 To get started quickly, this template already includes some statically configured example locations
-in `app-config.yaml` under `catalog.locations`. You can remove and replace these locations as you
+in `app-config.yaml` under `entities.yaml`. You can remove and replace these locations as you
 like, and also override them for local development in `app-config.local.yaml`.
 
 ## Authentication

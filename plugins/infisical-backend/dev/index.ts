@@ -18,7 +18,7 @@ const mockConfig = new ConfigReader({
     // For development, you can set either API token or client credentials
     authentication: {
       // Comment out one of these authentication methods
-      apiToken: 'mock-api-token',
+      token: 'mock-api-token',
       // clientId: 'mock-client-id',
       // clientSecret: 'mock-client-secret',
     },

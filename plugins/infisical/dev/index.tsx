@@ -28,7 +28,7 @@ const mockEntity: Entity = {
   metadata: {
     name: 'example-component',
     annotations: {
-      'infisical/project': 'mock-project-id',
+      'infisical/projectId': 'mock-project-id',
     },
   },
   spec: {

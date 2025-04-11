@@ -220,7 +220,7 @@ describe('infisical router', () => {
         environment: 'dev',
       };
 
-      mockInfisicalApi.updateSecret.mockResolvedValueOnce(mockSecret);
+      mockInfisicalApi.updateSecret.mockResolvedValueOnce(mockSecret, 'secret1');
 
       const response = await request(app)
         .patch('/secrets/secret1')
@@ -228,7 +228,7 @@ describe('infisical router', () => {
 
       expect(response.status).toBe(200);
       expect(response.body).toEqual(mockSecret);
-      expect(mockInfisicalApi.updateSecret).toHaveBeenCalledWith(secretData);
+      expect(mockInfisicalApi.updateSecret).toHaveBeenCalledWith(secretData, 'secret1');
     });
 
     it('returns 400 when required fields are missing', async () => {

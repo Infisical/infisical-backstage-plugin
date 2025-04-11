@@ -163,7 +163,7 @@ export async function createRouter(
       throw new InputError('workspaceId is required');
     }
 
-    const secret = await infisicalApi.updateSecret(secretData);
+    const secret = await infisicalApi.updateSecret(secretData, secretId);
     response.json(secret);
   });
 
