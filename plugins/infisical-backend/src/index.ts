@@ -1,1 +1,1 @@
-export { infisicalPlugin } from './plugin';
+export { infisicalPlugin as default } from './plugin';

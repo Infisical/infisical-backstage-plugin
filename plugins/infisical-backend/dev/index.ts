@@ -1,7 +1,7 @@
 import { createBackend } from '@backstage/backend-defaults';
 import { mockServices } from '@backstage/backend-test-utils';
 import { catalogServiceMock } from '@backstage/plugin-catalog-node/testUtils';
-import { infisicalPlugin } from '../src';
+import { default as infisicalPlugin } from '../src';
 
 // Create the backend instance
 const backend = createBackend();
