@@ -44,7 +44,7 @@ export const EntitySecretsProvider: React.FC<EntitySecretsProviderProps> = ({
                                 This component does not have an Infisical project configured.
                             </Typography>
                             <Typography paragraph>
-                                You need to add the <code>infisical/projectId</code> annotation to your <code>entities.yaml</code>:
+                                You need to add the <code>infisical/projectId</code> annotation to your <code>entity yaml file</code>:
                             </Typography>
                             <pre>
                                 {`metadata:

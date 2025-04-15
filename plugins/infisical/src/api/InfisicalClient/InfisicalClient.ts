@@ -149,7 +149,7 @@ export class InfisicalClient implements InfisicalApi {
   private validateWorkspaceId(workspaceId: string): void {
     if (!workspaceId) {
       throw new Error(
-        'No workspace ID provided. Set the infisical/projectId annotation in entities.yaml',
+        'No workspace ID provided. Set the infisical/projectId annotation in the entity yaml files',
       );
     }
   }

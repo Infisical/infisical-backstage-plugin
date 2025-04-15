@@ -97,7 +97,7 @@ const serviceEntityPage = (
 
 ### Entity Configuration
 
-To connect an entity to its Infisical project, add the following annotation to your `entities.yaml`:
+To connect an entity to its Infisical project, add the following annotation to your entity yaml file:
 
 ```yaml
 apiVersion: backstage.io/v1alpha1
