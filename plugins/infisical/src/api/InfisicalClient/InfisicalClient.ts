@@ -398,7 +398,7 @@ export class InfisicalClient implements InfisicalApi {
     );
 
     if (!response.ok) {
-      return this.handleApiError(response);
+      this.handleApiError(response);
     }
   }
 }

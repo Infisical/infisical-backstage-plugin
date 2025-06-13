@@ -64,6 +64,12 @@ export const SecretDialog: React.FC<SecretDialogProps> = ({
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
+    const [formValues, setFormValues] = useState<InfisicalSecretFormValues>({
+        secretKey: '',
+        secretValue: '',
+        secretComment: '',
+    });
+    
     useEffect(() => {
         if (open && secret && secret.secretValue === "<hidden-by-infisical>") {
             setIsLoading(true);
@@ -82,12 +88,6 @@ export const SecretDialog: React.FC<SecretDialogProps> = ({
             });
         }
     }, [open, secret, fetchSecretValue]);
-
-    const [formValues, setFormValues] = useState<InfisicalSecretFormValues>({
-        secretKey: '',
-        secretValue: '',
-        secretComment: '',
-    });
 
     // Form validation
     const [formErrors, setFormErrors] = useState({

@@ -66,9 +66,45 @@ metadata:
   name: example-service
   annotations:
     infisical/projectId: <your-infisical-project-id>
+    infisical/environment: "staging"
+    infisical/secretPath: "+/folder/nested"
 ```
 
-Replace `<your-infisical-project-id>` with the ID of your Infisical project.
+| Annotation | Required | Description |
+|------------|----------|-------------|
+| `infisical/projectId` | ✅ | The ID of your Infisical project |
+| `infisical/environment` | ❌ | Lock the view to a specific environment (e.g., "development", "staging", "production") |
+| `infisical/secretPath` | ❌ | Specify the folder path to display secrets from |
+
+
+#### Secret Path Behavior
+
+The `infisical/secretPath` annotation controls both the starting location and navigation permissions:
+
+**Without "+" prefix (restricted navigation):**
+```yaml
+infisical/secretPath: "/folder/nested"
+```
+- Shows secrets only from the specified path
+- **Disables** folder navigation - users cannot navigate to subfolders
+- Ideal for restricting access to a specific folder level
+
+**With "+" prefix (allowed navigation):**
+```yaml
+infisical/secretPath: "+/folder/nested"
+```
+- Shows secrets starting from the specified path (without the "+")
+- **Enables** folder navigation - users can navigate to subfolders
+- Ideal for setting a starting point while allowing exploration
+
+**Examples:**
+
+| Configuration | Behavior |
+|---------------|----------|
+| `infisical/secretPath: "/api/config"` | View only `/api/config`, no subfolder navigation |
+| `infisical/secretPath: "+/api/config"` | Start at `/api/config`, allow navigation to subfolders |
+| No `secretPath` annotation | Start at root (`/`), allow full navigation |
+
 
 ## Features
 

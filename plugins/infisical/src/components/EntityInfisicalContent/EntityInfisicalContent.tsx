@@ -5,7 +5,7 @@ import { EntitySecretsProvider } from '../EntitySecretsProvider';
 export const EntityInfisicalContent = () => {
     return (
         <EntitySecretsProvider>
-            {(workspaceId) => <EntityInfisicalSecretsContent workspaceId={workspaceId} />}
+            {(workspaceId, environment, secretPath) => <EntityInfisicalSecretsContent workspaceId={workspaceId} environment={environment} secretPath={secretPath} />}
         </EntitySecretsProvider>
     );
 };

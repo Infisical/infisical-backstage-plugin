@@ -70,6 +70,7 @@ describe('InfisicalApiClient', () => {
       });
       let error: Error | null = null;
       try {
+        // eslint-disable-next-line no-new
         new InfisicalApiClient({
           config: invalidConfig,
           logger,

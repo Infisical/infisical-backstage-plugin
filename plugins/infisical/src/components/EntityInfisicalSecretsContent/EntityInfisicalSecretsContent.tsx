@@ -1,3 +1,4 @@
+/* eslint-disable no-nested-ternary */
 /**
  * Main component for displaying and managing Infisical secrets
  */
@@ -21,6 +22,7 @@ import {
   MenuItem,
   FormControl,
   CircularProgress,
+  Chip,
 } from '@material-ui/core';
 import AddIcon from '@material-ui/icons/Add';
 import EditIcon from '@material-ui/icons/Edit';
@@ -136,6 +138,15 @@ const useStyles = makeStyles(theme => ({
       textDecoration: 'underline',
     },
   },
+  breadcrumbLinkDisabled: {
+    cursor: 'default',
+    display: 'flex',
+    alignItems: 'center',
+    opacity: 0.6,
+    '&:hover': {
+      textDecoration: 'none',
+    },
+  },
   homeIcon: {
     fontSize: '1rem',
     marginRight: theme.spacing(0.5),
@@ -149,9 +160,22 @@ const useStyles = makeStyles(theme => ({
       textDecoration: 'underline',
     },
   },
+  folderNameDisabled: {
+    display: 'flex',
+    alignItems: 'center',
+    color: theme.palette.text.disabled,
+    cursor: 'default',
+    '&:hover': {
+      textDecoration: 'none',
+    },
+  },
   folderIcon: {
     marginRight: theme.spacing(1),
     color: theme.palette.primary.main,
+  },
+  folderIconDisabled: {
+    marginRight: theme.spacing(1),
+    color: theme.palette.text.disabled,
   },
   keyIcon: {
     marginRight: theme.spacing(1),
@@ -176,6 +200,11 @@ const useStyles = makeStyles(theme => ({
       alignItems: 'center',
     },
   },
+  environmentChip: {
+    margin: theme.spacing(0),
+    backgroundColor: theme.palette.primary.light,
+    color: theme.palette.primary.contrastText,
+  },
   envIcon: {
     marginRight: theme.spacing(1),
     fontSize: '1rem',
@@ -189,6 +218,8 @@ const useStyles = makeStyles(theme => ({
 
 export interface EntityInfisicalSecretsContentProps {
   workspaceId: string;
+  environment?: string;
+  secretPath?: string;
 }
 
 /**
@@ -206,7 +237,7 @@ type TableItem = (InfisicalSecret | InfisicalFolder) & {
 /**
  * Component that displays and manages Infisical secrets for a specific workspace
  */
-export const EntityInfisicalSecretsContent = ({ workspaceId }: EntityInfisicalSecretsContentProps) => {
+export const EntityInfisicalSecretsContent = ({ workspaceId, environment, secretPath }: EntityInfisicalSecretsContentProps) => {
   const classes = useStyles();
   const infisicalApi = useApi(infisicalApiRef);
   const alertApi = useApi(alertApiRef);
@@ -218,8 +249,17 @@ export const EntityInfisicalSecretsContent = ({ workspaceId }: EntityInfisicalSe
   const [loadingEnvironments, setLoadingEnvironments] = useState(true);
   const [cardTitle, setCardTitle] = useState<string>("Infisical Secrets");
 
+  // Base path that cannot be navigated above (derived from secretPath prop)
+  const [basePath, setBasePath] = useState('/');
+
   // State for current path navigation
   const [currentPath, setCurrentPath] = useState('/');
+
+  // Navigation control based on secretPath parameter
+  const [allowNavigation, setAllowNavigation] = useState(true);
+
+  // Determine if environment is locked (provided as prop)
+  const isEnvironmentLocked = Boolean(environment);
 
   // Search state
   const [searchText, setSearchText] = useState('');
@@ -240,6 +280,40 @@ export const EntityInfisicalSecretsContent = ({ workspaceId }: EntityInfisicalSe
   const [secretValues, setSecretValues] = useState<Record<string, string>>({});
   const [loadingSecretValues, setLoadingSecretValues] = useState<Record<string, boolean>>({});
 
+  // Initialize base path, current path, and navigation permissions based on secretPath prop
+  useEffect(() => {
+    if (!secretPath) {
+      // No secretPath provided - allow full navigation
+      setAllowNavigation(true);
+      setBasePath('/');
+      setCurrentPath('/');
+      return;
+    }
+
+    if (secretPath.startsWith('+')) {
+      // secretPath starts with "+" - allow navigation, remove "+" prefix
+      setAllowNavigation(true);
+      const pathWithoutPlus = secretPath.slice(1);
+      const normalizedPath = pathWithoutPlus.startsWith('/') ? pathWithoutPlus : `/${pathWithoutPlus}`;
+      const cleanPath = normalizedPath.endsWith('/') && normalizedPath !== '/'
+        ? normalizedPath.slice(0, -1)
+        : normalizedPath;
+      
+      setBasePath(cleanPath);
+      setCurrentPath(cleanPath);
+    } else {
+      // secretPath provided without "+" - restrict navigation to current level only
+      setAllowNavigation(false);
+      const normalizedPath = secretPath.startsWith('/') ? secretPath : `/${secretPath}`;
+      const cleanPath = normalizedPath.endsWith('/') && normalizedPath !== '/'
+        ? normalizedPath.slice(0, -1)
+        : normalizedPath;
+
+      setBasePath(cleanPath);
+      setCurrentPath(cleanPath);
+    }
+  }, [secretPath]);
+
   // Fetch environments first
   useEffect(() => {
     const fetchEnvironments = async () => {
@@ -250,7 +324,14 @@ export const EntityInfisicalSecretsContent = ({ workspaceId }: EntityInfisicalSe
         setCardTitle(name || '');
 
         if (envs.length > 0) {
-          setSelectedEnvironment(envs[0].slug);
+          if (environment) {
+            // If environment is provided as prop, use it and lock it
+            const foundEnv = envs.find(env => env.slug === environment);
+            setSelectedEnvironment(foundEnv?.slug || envs[0].slug);
+          } else {
+            // If no environment provided, use the first one
+            setSelectedEnvironment(envs[0].slug);
+          }
         }
 
         setLoadingEnvironments(false);
@@ -261,7 +342,7 @@ export const EntityInfisicalSecretsContent = ({ workspaceId }: EntityInfisicalSe
     };
 
     fetchEnvironments();
-  }, [infisicalApi, workspaceId, errorApi]);
+  }, [infisicalApi, workspaceId, environment, errorApi]);
 
   // Fetch secrets from API
   const [{ value: { secrets, folders } = { secrets: [], folders: [] }, loading, error }, fetchSecrets] = useAsyncFn(async () => {
@@ -426,6 +507,7 @@ export const EntityInfisicalSecretsContent = ({ workspaceId }: EntityInfisicalSe
       });
 
       if (!secret) {
+        // eslint-disable-next-line consistent-return
         return null;
       }
 
@@ -448,20 +530,14 @@ export const EntityInfisicalSecretsContent = ({ workspaceId }: EntityInfisicalSe
         ...prev,
         [secretId]: false,
       }));
+      // eslint-disable-next-line consistent-return, no-unsafe-finally
       return secret;
     }
-  }, [
-    infisicalApi,
-    workspaceId,
-    currentPath,
-    selectedEnvironment,
-    errorApi,
-    alertApi
-  ]);
+  }, [infisicalApi, workspaceId, currentPath, selectedEnvironment, alertApi]);
 
   const toggleValueVisibility = useCallback((secretId: string, secretKey?: string) => {
     if (!secretKey) return;
-    
+
     if (secretValues[secretId]) {
       setVisibleValues(prev => ({
         ...prev,
@@ -473,79 +549,120 @@ export const EntityInfisicalSecretsContent = ({ workspaceId }: EntityInfisicalSe
   }, [secretValues, fetchSecretValue]);
 
   const navigateToFolder = useCallback((folderName: string) => {
+    if (!allowNavigation) {
+      return; // Navigation is disabled
+    }
+
     const newPath = currentPath === '/'
       ? `/${folderName}`
       : `${currentPath}/${folderName}`;
 
     setCurrentPath(newPath);
-  }, [currentPath]);
+  }, [currentPath, allowNavigation]);
 
   const navigateToBreadcrumb = useCallback((index: number) => {
+    if (!allowNavigation) {
+      return; // Navigation is disabled
+    }
+
     if (index === -1) {
-      setCurrentPath('/');
+      // Navigate to base path (not necessarily root)
+      setCurrentPath(basePath);
       return;
     }
 
     const pathParts = currentPath.split('/').filter(Boolean);
-    const newPath = `/${pathParts.slice(0, index + 1).join('/')}`;
-    setCurrentPath(newPath);
-  }, [currentPath]);
+    const basePathParts = basePath.split('/').filter(Boolean);
+
+    // Ensure we don't navigate above the base path
+    const targetIndex = Math.max(index, basePathParts.length - 1);
+    const newPath = `/${pathParts.slice(0, targetIndex + 1).join('/')}`;
+
+    // Ensure the new path is not above the base path
+    if (newPath.startsWith(basePath) || basePath === '/') {
+      setCurrentPath(newPath);
+    }
+  }, [currentPath, basePath, allowNavigation]);
 
   const handleEnvironmentChange = useCallback((event: React.ChangeEvent<{ value: unknown }>) => {
-    setSelectedEnvironment(event.target.value as string);
-    setCurrentPath('/');
-    setSecretValues({});
-    setVisibleValues({});
-    setLoadingSecretValues({});
-  }, []);
+    if (!isEnvironmentLocked) {
+      setSelectedEnvironment(event.target.value as string);
+      setCurrentPath(basePath); // Reset to base path when changing environment
+      setSecretValues({});
+      setVisibleValues({});
+      setLoadingSecretValues({});
+    }
+  }, [isEnvironmentLocked, basePath]);
 
   const getBreadcrumbs = useCallback(() => {
     const pathParts = currentPath.split('/').filter(Boolean);
+    const basePathParts = basePath.split('/').filter(Boolean);
+
+    // Determine which parts of the path are navigable (not below base path)
+    const navigablePathParts = pathParts.slice(basePathParts.length);
+
+    // Get the environment to display
+    const selectedEnv = environments.find(env => env.slug === selectedEnvironment);
 
     return (
       <Breadcrumbs separator={<NavigateNextIcon fontSize="small" />}>
-        <FormControl className={classes.environmentSelect} size="small" variant="outlined">
-          <Select
-            value={selectedEnvironment || ''}
-            onChange={handleEnvironmentChange}
-            displayEmpty
-            disabled={loadingEnvironments}
-            IconComponent={ExpandMoreIcon}
-          >
-            {environments.length === 0 ? (
-              <MenuItem value="" disabled>
-                No environments available
-              </MenuItem>
-            ) : (
-              environments.map(env => (
-                <MenuItem key={env.slug} value={env.slug}>
-                  {env.name}
+        {/* Environment selector or chip */}
+        {isEnvironmentLocked ? (
+          <Chip
+            label={selectedEnv?.name || selectedEnvironment}
+            size="small"
+            className={classes.environmentChip}
+          />
+        ) : (
+          <FormControl className={classes.environmentSelect} size="small" variant="outlined">
+            <Select
+              value={selectedEnvironment || ''}
+              onChange={handleEnvironmentChange}
+              displayEmpty
+              disabled={loadingEnvironments}
+              IconComponent={ExpandMoreIcon}
+            >
+              {environments.length === 0 ? (
+                <MenuItem value="" disabled>
+                  No environments available
                 </MenuItem>
-              ))
-            )}
-          </Select>
-        </FormControl>
+              ) : (
+                environments.map(env => (
+                  <MenuItem key={env.slug} value={env.slug}>
+                    {env.name}
+                  </MenuItem>
+                ))
+              )}
+            </Select>
+          </FormControl>
+        )}
+
+        {/* Home/Base path button */}
         <Link
           component="button"
           variant="body2"
-          className={classes.breadcrumbLink}
-          onClick={() => navigateToBreadcrumb(-1)}
-          color={pathParts.length === 0 ? "textPrimary" : "inherit"}
+          className={allowNavigation ? classes.breadcrumbLink : classes.breadcrumbLinkDisabled}
+          onClick={allowNavigation ? () => navigateToBreadcrumb(-1) : undefined}
+          color={navigablePathParts.length === 0 ? "textPrimary" : "inherit"}
+          style={{ pointerEvents: allowNavigation ? 'auto' : 'none' }}
         >
           <HomeIcon className={classes.homeIcon} />
+          {basePath !== '/' && basePathParts[basePathParts.length - 1]}
         </Link>
 
-        {pathParts.map((part, index) => {
-          const isLast = index === pathParts.length - 1;
+        {/* Navigable path parts */}
+        {navigablePathParts.map((part, index) => {
+          const isLast = index === navigablePathParts.length - 1;
 
           return (
             <Link
               key={index}
               component="button"
               variant="body2"
-              className={classes.breadcrumbLink}
-              onClick={() => navigateToBreadcrumb(index)}
+              className={allowNavigation ? classes.breadcrumbLink : classes.breadcrumbLinkDisabled}
+              onClick={allowNavigation ? () => navigateToBreadcrumb(basePathParts.length + index) : undefined}
               color={isLast ? "textPrimary" : "inherit"}
+              style={{ pointerEvents: allowNavigation ? 'auto' : 'none' }}
             >
               {part}
             </Link>
@@ -555,14 +672,19 @@ export const EntityInfisicalSecretsContent = ({ workspaceId }: EntityInfisicalSe
     );
   }, [
     classes.breadcrumbLink,
+    classes.breadcrumbLinkDisabled,
     classes.environmentSelect,
+    classes.environmentChip,
     classes.homeIcon,
     currentPath,
+    basePath,
     environments,
     handleEnvironmentChange,
+    isEnvironmentLocked,
     loadingEnvironments,
     navigateToBreadcrumb,
-    selectedEnvironment
+    selectedEnvironment,
+    allowNavigation
   ]);
 
   const filterData = useCallback((data: TableItem[]) => {
@@ -606,10 +728,10 @@ export const EntityInfisicalSecretsContent = ({ workspaceId }: EntityInfisicalSe
       };
     }
 
-    if (currentPath === '/') {
+    if (currentPath === basePath) {
       return {
         title: "No secrets or folders found",
-        description: "This workspace doesn't have any secrets or folders yet. Create your first secret to get started."
+        description: "This location doesn't have any secrets or folders yet. Create your first secret to get started."
       };
     }
 
@@ -617,7 +739,7 @@ export const EntityInfisicalSecretsContent = ({ workspaceId }: EntityInfisicalSe
       title: "Empty folder",
       description: "This folder doesn't have any secrets or subfolders yet."
     };
-  }, [currentPath, selectedEnvironment, searchText]);
+  }, [currentPath, basePath, selectedEnvironment, searchText]);
 
   const columns: TableColumn<TableItem>[] = [
     {
@@ -626,20 +748,23 @@ export const EntityInfisicalSecretsContent = ({ workspaceId }: EntityInfisicalSe
       highlight: true,
       render: rowData => {
         if (rowData.isFolder && rowData.name) {
+          const isNavigationDisabled = !allowNavigation;
+          
           return (
             <div
-              className={classes.folderName}
-              onClick={() => navigateToFolder(rowData.name!)}
-              role="button"
-              tabIndex={0}
-              onKeyPress={(e) => {
+              className={isNavigationDisabled ? classes.folderNameDisabled : classes.folderName}
+              onClick={isNavigationDisabled ? undefined : () => navigateToFolder(rowData.name!)}
+              role={isNavigationDisabled ? undefined : "button"}
+              tabIndex={isNavigationDisabled ? undefined : 0}
+              onKeyPress={isNavigationDisabled ? undefined : (e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                   navigateToFolder(rowData.name!);
                 }
               }}
-              aria-label={`Open ${rowData.name!} folder`}
+              aria-label={isNavigationDisabled ? undefined : `Open ${rowData.name!} folder`}
+              style={{ cursor: isNavigationDisabled ? 'default' : 'pointer' }}
             >
-              <FolderIcon className={classes.folderIcon} />
+              <FolderIcon className={isNavigationDisabled ? classes.folderIconDisabled : classes.folderIcon} />
               <Typography variant="body2">{rowData.name!}</Typography>
             </div>
           );
@@ -747,7 +872,7 @@ export const EntityInfisicalSecretsContent = ({ workspaceId }: EntityInfisicalSe
   return (
     <InfoCard title={cardTitle}>
       <div>
-        {/* Combined top bar with environment dropdown, breadcrumbs, search, and add button */}
+        {/* Combined top bar with environment dropdown/chip, breadcrumbs, search, and add button */}
         <div className={classes.topContainer}>
           <div className={classes.breadcrumbsContainer}>
             {getBreadcrumbs()}

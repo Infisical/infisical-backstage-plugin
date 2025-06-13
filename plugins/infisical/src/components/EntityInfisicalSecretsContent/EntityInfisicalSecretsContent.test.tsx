@@ -1,3 +1,4 @@
+/* eslint-disable no-nested-ternary */
 /**
  * Tests for EntityInfisicalSecretsContent component
  */

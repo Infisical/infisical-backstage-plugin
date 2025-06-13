@@ -11,6 +11,8 @@ import { Typography } from '@material-ui/core';
  * Annotation key for Infisical project ID
  */
 export const INFISICAL_PROJECT_ANNOTATION = 'infisical/projectId';
+export const INFISICAL_ENVIRONMENT_ANNOTATION = 'infisical/environment';
+export const INFISICAL_SECRET_PATH_ANNOTATION = 'infisical/secretPath';
 
 /**
  * Props for EntitySecretsProvider
@@ -19,7 +21,7 @@ export interface EntitySecretsProviderProps {
     /**
      * Render function that receives the workspace ID
      */
-    children: (workspaceId: string) => ReactNode;
+    children: (workspaceId: string, environment?: string, secretPath?: string) => ReactNode;
 }
 
 /**
@@ -31,6 +33,8 @@ export const EntitySecretsProvider: React.FC<EntitySecretsProviderProps> = ({
 }) => {
     const { entity } = useEntity();
     const workspaceId = entity.metadata.annotations?.[INFISICAL_PROJECT_ANNOTATION];
+    const environment = entity.metadata.annotations?.[INFISICAL_ENVIRONMENT_ANNOTATION];
+    const secretPath = entity.metadata.annotations?.[INFISICAL_SECRET_PATH_ANNOTATION];
 
     if (!workspaceId) {
         return (
@@ -58,5 +62,5 @@ export const EntitySecretsProvider: React.FC<EntitySecretsProviderProps> = ({
         );
     }
 
-    return <>{children(workspaceId)}</>;
+    return <>{children(workspaceId, environment, secretPath)}</>;
 };
