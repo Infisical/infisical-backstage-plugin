@@ -2,7 +2,7 @@ import express from 'express';
 import request from 'supertest';
 import { createRouter } from './router';
 import { ConfigReader } from '@backstage/config';
-import { getVoidLogger } from '@backstage/backend-common';
+import { mockServices } from '@backstage/backend-test-utils';
 import { InfisicalSecret, InfisicalProject } from './types';
 import { NotFoundError, ConflictError } from '@backstage/errors';
 
@@ -20,47 +20,12 @@ jest.mock('./infisicalApi', () => {
   };
 });
 
-jest.mock('@backstage/backend-common', () => {
-  const actual = jest.requireActual('@backstage/backend-common');
-  return {
-    ...actual,
-    errorHandler: () => (err: Error, _req: any, res: any, next: any) => {
-      if (res.headersSent) {
-        next(err);
-        return;
-      }
-
-      let status;
-      switch (err.name) {
-        case 'InputError':
-          status = 400;
-          break;
-        case 'NotFoundError':
-          status = 404;
-          break;
-        case 'ConflictError':
-          status = 409;
-          break;
-        default:
-          status = 500;
-      }
-
-      res.status(status).json({
-        error: { message: err.message },
-        message: err.message,
-        name: err.name,
-        status,
-      });
-    },
-  };
-});
-
 describe('infisical router', () => {
   let app: express.Express;
 
   beforeAll(async () => {
     const router = await createRouter({
-      logger: getVoidLogger(),
+      logger: mockServices.rootLogger(),
       config: new ConfigReader({}),
     });
 

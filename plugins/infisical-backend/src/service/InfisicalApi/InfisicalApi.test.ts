@@ -1,5 +1,5 @@
 import { ConfigReader } from '@backstage/config';
-import { getVoidLogger } from '@backstage/backend-common';
+import { mockServices } from '@backstage/backend-test-utils';
 import { InfisicalApiClient } from '../InfisicalApi';
 import { NotFoundError } from '@backstage/errors';
 
@@ -41,7 +41,7 @@ describe('InfisicalApiClient', () => {
     },
   });
 
-  const logger = getVoidLogger();
+  const logger = mockServices.rootLogger();
   let apiClient: InfisicalApiClient;
 
   beforeEach(() => {

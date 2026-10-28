@@ -4,7 +4,7 @@ import {
   InputError
 } from '@backstage/errors';
 import { Config } from '@backstage/config';
-import { Logger } from 'winston';
+import { LoggerService } from '@backstage/backend-plugin-api';
 import {
   InfisicalFoldersResponse,
   InfisicalProject,
@@ -70,7 +70,7 @@ export interface InfisicalApiClientOptions {
   /** Configuration */
   config: Config;
   /** Logger instance */
-  logger: Logger;
+  logger: LoggerService;
 }
 
 /**
@@ -79,7 +79,7 @@ export interface InfisicalApiClientOptions {
  */
 export class InfisicalApiClient {
   private readonly baseUrl: string;
-  private readonly logger: Logger;
+  private readonly logger: LoggerService;
   private credentials: AuthCredentials;
   private tokenRefreshInProgress: boolean = false;
   private maxRetries: number = 3;

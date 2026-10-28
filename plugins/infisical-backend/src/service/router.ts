@@ -1,7 +1,7 @@
-import { errorHandler } from '@backstage/backend-common';
+import { MiddlewareFactory } from '@backstage/backend-defaults/rootHttpRouter';
+import { LoggerService } from '@backstage/backend-plugin-api';
 import express from 'express';
 import Router from 'express-promise-router';
-import { Logger } from 'winston';
 import { Config } from '@backstage/config';
 import { InfisicalApiClient } from './InfisicalApi';
 import { InputError } from '@backstage/errors';
@@ -17,7 +17,7 @@ import {
  */
 export interface RouterOptions {
   /** Logger instance */
-  logger: Logger;
+  logger: LoggerService;
   /** Config instance */
   config: Config;
 }
@@ -194,7 +194,8 @@ export async function createRouter(
     response.status(204).send();
   });
 
-  router.use(errorHandler());
+  const middleware = MiddlewareFactory.create({ config, logger });
+  router.use(middleware.error());
 
   return router;
 }
