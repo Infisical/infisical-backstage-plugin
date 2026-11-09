@@ -1,0 +1,42 @@
+{
+  "name": "@infisical/backstage-plugin-infisical-common",
+  "version": "0.1.0",
+  "description": "Common functionalities for the infisical plugin",
+  "license": "Apache-2.0",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "publishConfig": {
+    "access": "public",
+    "main": "dist/index.cjs.js",
+    "module": "dist/index.esm.js",
+    "types": "dist/index.d.ts"
+  },
+  "backstage": {
+    "role": "common-library",
+    "pluginId": "infisical",
+    "pluginPackages": [
+      "@infisical/backstage-plugin-infisical",
+      "@infisical/backstage-backend-plugin-infisical",
+      "@infisical/backstage-plugin-infisical-common"
+    ]
+  },
+  "sideEffects": false,
+  "scripts": {
+    "build": "backstage-cli package build",
+    "lint": "backstage-cli package lint",
+    "test": "backstage-cli package test",
+    "clean": "backstage-cli package clean",
+    "prepack": "backstage-cli package prepack",
+    "postpack": "backstage-cli package postpack"
+  },
+  "dependencies": {
+    "@backstage/plugin-catalog-common": "^1.1.3",
+    "@backstage/plugin-permission-common": "^0.8.4"
+  },
+  "devDependencies": {
+    "@backstage/cli": "^0.31.0"
+  },
+  "files": [
+    "dist"
+  ]
+}
