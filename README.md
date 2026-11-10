@@ -237,6 +237,8 @@ The backend also enforces the entity annotations server-side, independently of t
 - Requests for an entity that does not exist or has no `infisical/projectId` annotation return `404`.
 - Requests for an entity whose `infisical/identity` annotations name an identity that is not configured return `404`; identities with `allowedEntityRefs` reject other entities with `403`. These checks run after the permission check.
 - Secret keys and project IDs are sent to Infisical as a single encoded URL path segment. A secret key of `.` or `..`, or an `environment` in a request body that is not a string, is rejected with `400`.
+- Errors returned by Infisical keep their meaning: `400`/`422` become `400`, and `403`, `404` and `409` are passed through (a `403` here means the machine identity lacks access in Infisical, for example because it is not a member of the project). Rate limiting, timeouts and `5xx` responses become `503`. A `401` from Infisical means the configured machine identity credentials are invalid and is reported as `500`.
+- Only reads are retried (up to three times) on network errors and `408`/`429`/`5xx` responses. Writes are retried only on `429`, and other errors are never retried.
 
 Make sure the permission framework is enabled in `app-config.yaml`:
 

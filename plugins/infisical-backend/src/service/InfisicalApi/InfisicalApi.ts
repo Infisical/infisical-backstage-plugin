@@ -1,7 +1,9 @@
 import {
   NotFoundError,
+  NotAllowedError,
   ConflictError,
-  InputError
+  InputError,
+  ServiceUnavailableError,
 } from '@backstage/errors';
 import { Config } from '@backstage/config';
 import { LoggerService } from '@backstage/backend-plugin-api';
@@ -360,62 +362,71 @@ export class InfisicalApiClient {
   }
 
   /**
-   * Parse API error response
+   * Turn a failed Infisical response into an error whose type decides the
+   * status code Backstage answers with.
    * @internal
    */
   private async parseErrorResponse(response: Response): Promise<Error> {
+    let detail = 'Failed to parse error response';
     try {
       const contentType = response.headers.get('content-type');
-
-      // If JSON response, try to parse structured error
       if (contentType && contentType.includes('application/json')) {
         const errorData = (await response.json()) as ErrorResponse;
-        return new Error(
-          `Infisical API error (${response.status}): ${
-            errorData.message || 'Unknown error'
-          }`,
-        );
+        detail = errorData?.message || 'Unknown error';
+      } else {
+        detail = (await response.text()) || 'Unknown error';
       }
+    } catch {
+      // Keep the fallback detail
+    }
 
-      // Otherwise, get text content
-      const errorText = await response.text();
+    const { status } = response;
+    const message = `Infisical API error (${status}): ${detail}`;
 
-      // Map to appropriate error types
-      switch (response.status) {
-        case 404:
-          return new NotFoundError(`Resource not found: ${errorText}`);
-        case 409:
-          return new ConflictError(`Conflict: ${errorText}`);
-        case 400:
-          return new InputError(`Bad request: ${errorText}`);
-        default:
-          return new Error(
-            `Infisical API error (${response.status}): ${errorText}`,
-          );
-      }
-    } catch (error) {
-      return new Error(
-        `Infisical API error (${response.status}): Failed to parse error response`,
-      );
+    switch (status) {
+      case 400:
+      case 422:
+        return new InputError(message);
+      case 403:
+        return new NotAllowedError(message);
+      case 404:
+        return new NotFoundError(message);
+      case 409:
+        return new ConflictError(message);
+      case 408:
+      case 429:
+        return new ServiceUnavailableError(message);
+      default:
+        // A 401 means the machine identity credentials are wrong. That is a
+        // server-side misconfiguration, not an expired Backstage session, so
+        // it is not forwarded as 401.
+        return status >= 500
+          ? new ServiceUnavailableError(message)
+          : new Error(message);
     }
   }
 
   /**
-   * Check if a request should be retried based on error or status code
+   * Check if a failed response should be retried. Reads are retried on any
+   * transient status. Writes are only retried when Infisical rate limited the
+   * request, because any other failure may have been applied already.
    * @internal
    */
-  private shouldRetry(error: Error | null, statusCode: number | null): boolean {
-    // Retry on network errors
-    if (error && !error.message.includes('Invalid credentials')) {
-      return true;
+  private shouldRetryStatus(method: string, statusCode: number): boolean {
+    if (method.toUpperCase() === 'GET') {
+      return this.retryStatusCodes.includes(statusCode);
     }
+    return statusCode === 429;
+  }
 
-    // Retry on specific status codes
-    if (statusCode && this.retryStatusCodes.includes(statusCode)) {
-      return true;
-    }
-
-    return false;
+  /**
+   * Wait before the next attempt, doubling the delay each time
+   * @internal
+   */
+  private async backoff(retryCount: number): Promise<void> {
+    await new Promise(resolve =>
+      setTimeout(resolve, this.retryDelay * Math.pow(2, retryCount)),
+    );
   }
 
   /**
@@ -425,109 +436,92 @@ export class InfisicalApiClient {
   private async makeRequest<T>(
     options: RequestOptions,
     retryCount: number = 0,
+    tokenRefreshed: boolean = false,
   ): Promise<T> {
     const { method, path, body, queryParams, context } = options;
     const url = this.buildUrl(path, queryParams);
     const retry = options.retry !== false;
+    const canRetry = retry && retryCount < this.maxRetries;
 
     this.logger.debug(`Making ${method} request to ${url}`);
 
+    let response: Response;
     try {
       // Refreshes the access token first when it has expired
       const authHeader = await this.getAuthorizationHeader();
 
-      const headers = {
-        Authorization: authHeader,
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-        'User-Agent': buildUserAgent(context),
-      };
-
-      const response = await fetch(url, {
+      response = await fetch(url, {
         method,
-        headers,
+        headers: {
+          Authorization: authHeader,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          'User-Agent': buildUserAgent(context),
+        },
         body: body ? JSON.stringify(body) : undefined,
       });
-
-      this.logger.debug(
-        `Received response with status ${response.status} from ${url}`,
-      );
-
-      // Handle 401 Unauthorized - could be due to expired token
-      if (
-        response.status === 401 &&
-        this.credentials.type === 'client-credentials' &&
-        retry &&
-        retryCount < this.maxRetries
-      ) {
-        this.logger.warn(
-          `Received 401 Unauthorized, refreshing token and retrying (attempt ${
-            retryCount + 1
-          }/${this.maxRetries})`,
-        );
-
-        // Force token refresh
-        this.credentials.tokenExpiresAt = 0;
-        await new Promise(resolve =>
-          setTimeout(resolve, this.retryDelay * Math.pow(2, retryCount)),
-        );
-
-        // Retry the request with incremented retry count
-        return this.makeRequest<T>(options, retryCount + 1);
-      }
-
-      if (!response.ok) {
-        const error = await this.parseErrorResponse(response);
-
-        // Check if we should retry based on the error
-        if (
-          retry &&
-          retryCount < this.maxRetries &&
-          this.shouldRetry(error, response.status)
-        ) {
-          this.logger.warn(
-            `Request failed with status ${response.status}, retrying (attempt ${
-              retryCount + 1
-            }/${this.maxRetries})`,
-          );
-          await new Promise(resolve =>
-            setTimeout(resolve, this.retryDelay * Math.pow(2, retryCount)),
-          );
-          return this.makeRequest<T>(options, retryCount + 1);
-        }
-
-        throw error;
-      }
-
-      // Return undefined for 204 No Content
-      if (response.status === 204) {
-        return undefined as T;
-      }
-
-      const data = (await response.json()) as T;
-      this.logger.debug(`Successfully parsed response from ${url}`);
-      return data;
     } catch (error) {
-      // If we have network errors or other transient issues, retry
-      if (
-        retry &&
-        retryCount < this.maxRetries &&
-        this.shouldRetry(error as Error, null)
-      ) {
+      // fetch rejects with a TypeError when the request never got a response.
+      // Only reads are retried: a write may have reached Infisical.
+      const isNetworkError = (error as Error)?.name === 'TypeError';
+      if (canRetry && isNetworkError && method.toUpperCase() === 'GET') {
         this.logger.warn(
           `Error calling Infisical API, retrying (attempt ${retryCount + 1}/${
             this.maxRetries
           }): ${error}`,
         );
-        await new Promise(resolve =>
-          setTimeout(resolve, this.retryDelay * Math.pow(2, retryCount)),
-        );
-        return this.makeRequest<T>(options, retryCount + 1);
+        await this.backoff(retryCount);
+        return this.makeRequest<T>(options, retryCount + 1, tokenRefreshed);
       }
 
       this.logger.error(`Error calling Infisical API at ${url}: ${error}`);
       throw error;
     }
+
+    this.logger.debug(
+      `Received response with status ${response.status} from ${url}`,
+    );
+
+    // A 401 can mean the access token was revoked or expired early. Log in
+    // again once; a second 401 will not fix itself.
+    if (
+      response.status === 401 &&
+      this.credentials.type === 'client-credentials' &&
+      retry &&
+      !tokenRefreshed
+    ) {
+      this.logger.warn(
+        'Received 401 Unauthorized, refreshing token and retrying once',
+      );
+      this.credentials.tokenExpiresAt = 0;
+      return this.makeRequest<T>(options, retryCount, true);
+    }
+
+    if (!response.ok) {
+      const error = await this.parseErrorResponse(response);
+
+      if (canRetry && this.shouldRetryStatus(method, response.status)) {
+        this.logger.warn(
+          `Request failed with status ${response.status}, retrying (attempt ${
+            retryCount + 1
+          }/${this.maxRetries})`,
+        );
+        await this.backoff(retryCount);
+        return this.makeRequest<T>(options, retryCount + 1, tokenRefreshed);
+      }
+
+      this.logger.error(`Error calling Infisical API at ${url}: ${error}`);
+      throw error;
+    }
+
+    // Return undefined for 204 No Content
+    if (response.status === 204) {
+      return undefined as T;
+    }
+
+    const data = (await response.json()) as T;
+    this.logger.debug(`Successfully parsed response from ${url}`);
+    return data;
   }
 
   /**

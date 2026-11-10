@@ -64,7 +64,7 @@ Defined in `plugins/infisical-common/src/permissions.ts`. All five use the `cata
 
 ### Machine identities
 
-`InfisicalIdentityRegistry` builds one `InfisicalApiClient` per identity at startup: the default from `infisical.authentication` (mandatory only when no named identities exist) and one per key under `infisical.identities`. Each client handles `auth_token` or `universalAuth` (token cached and refreshed), retries on 408/429/5xx, and calls Infisical's `/v3/secrets/raw`, `/v1/folders` and `/v1/workspace/:id` endpoints. Identity names must be valid Backstage config keys (`payments-dev` works, `team-1` does not).
+`InfisicalIdentityRegistry` builds one `InfisicalApiClient` per identity at startup: the default from `infisical.authentication` (mandatory only when no named identities exist) and one per key under `infisical.identities`. Each client handles `auth_token` or `universalAuth` (token cached and refreshed), retries GETs on network errors and 408/429/5xx (writes only on 429), maps Infisical error statuses to `@backstage/errors` classes (400/422, 403, 404, 409 pass through; 408/429/5xx become 503; 401 stays 500), and calls Infisical's `/v3/secrets/raw`, `/v1/folders` and `/v1/workspace/:id` endpoints. Identity names must be valid Backstage config keys (`payments-dev` works, `team-1` does not).
 
 ### Keeping things in sync
 

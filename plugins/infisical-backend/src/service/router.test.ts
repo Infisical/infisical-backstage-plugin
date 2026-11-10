@@ -10,7 +10,11 @@ import {
 import { AuthorizeResult } from '@backstage/plugin-permission-common';
 import { CatalogService } from '@backstage/plugin-catalog-node';
 import { Entity } from '@backstage/catalog-model';
-import { NotFoundError, ConflictError } from '@backstage/errors';
+import {
+  NotFoundError,
+  ConflictError,
+  NotAllowedError,
+} from '@backstage/errors';
 import {
   infisicalSecretCreatePermission,
   infisicalSecretDeletePermission,
@@ -292,6 +296,19 @@ describe('infisical router', () => {
 
       expect(response.status).toBe(404);
       expect(response.body.error.message).toContain('Workspace not found');
+    });
+
+    it('returns 403 when Infisical denies the machine identity', async () => {
+      mockInfisicalApi.getSecrets.mockRejectedValueOnce(
+        new NotAllowedError('Infisical API error (403): not a project member'),
+      );
+
+      const response = await request(app).get(
+        `/secrets?entityRef=${ENTITY_REF}`,
+      );
+
+      expect(response.status).toBe(403);
+      expect(response.body.error.message).toContain('not a project member');
     });
   });
 
@@ -628,6 +645,17 @@ describe('infisical router', () => {
 
       expect(response.status).toBe(409);
       expect(response.body.error.message).toContain('already exists');
+    });
+
+    it('returns 403 when Infisical denies the machine identity', async () => {
+      mockInfisicalApi.createSecret.mockRejectedValueOnce(
+        new NotAllowedError('Infisical API error (403): not a project member'),
+      );
+
+      const response = await request(app).post('/secrets').send(secretData);
+
+      expect(response.status).toBe(403);
+      expect(response.body.error.message).toContain('not a project member');
     });
   });
 
