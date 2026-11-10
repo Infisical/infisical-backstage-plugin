@@ -346,10 +346,17 @@ export const EntityInfisicalSecretsContent = ({ entityRef, environment, secretPa
 
   // Fetch environments first
   useEffect(() => {
+    // Ignore responses that arrive after the entity or annotations changed
+    let stale = false;
+
     const fetchEnvironments = async () => {
       try {
         setLoadingEnvironments(true);
+        // A previous lookup may have been denied (e.g. for another
+        // environment's identity); only this lookup's outcome counts
+        setAccessDenied(false);
         const { environments: envs, name } = await infisicalApi.getEnvironments(entityRef);
+        if (stale) return;
         setEnvironments(envs);
         setCardTitle(name || '');
 
@@ -366,6 +373,7 @@ export const EntityInfisicalSecretsContent = ({ entityRef, environment, secretPa
 
         setLoadingEnvironments(false);
       } catch (err) {
+        if (stale) return;
         if (isForbidden(err)) {
           setAccessDenied(true);
         } else {
@@ -376,6 +384,10 @@ export const EntityInfisicalSecretsContent = ({ entityRef, environment, secretPa
     };
 
     fetchEnvironments();
+
+    return () => {
+      stale = true;
+    };
   }, [infisicalApi, entityRef, environment, errorApi]);
 
   // Fetch secrets from API
@@ -1028,6 +1040,7 @@ export const EntityInfisicalSecretsContent = ({ entityRef, environment, secretPa
           onClose={handleCloseDialog}
           onSave={handleSaveSecret}
           fetchSecretValue={fetchSecretValue}
+          canReadValue={canReadValues}
         />
 
         {/* Delete Confirmation Dialog */}

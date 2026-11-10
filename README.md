@@ -226,7 +226,7 @@ All permissions use the `catalog-entity` resource type with the entity the secre
 | `infisical.secret.read` | `read` | Listing secrets, folders and environments (`GET /secrets`, `GET /environments`) |
 | `infisical.secret.value.read` | `read` | Revealing secret values (`GET /secrets/:secretId`). Without it, values are redacted from listings |
 | `infisical.secret.create` | `create` | Creating secrets (`POST /secrets`) |
-| `infisical.secret.update` | `update` | Updating secrets (`PATCH /secrets/:secretId`) |
+| `infisical.secret.update` | `update` | Updating secrets (`PATCH /secrets/:secretId`). Without `infisical.secret.value.read`, users can still rename a secret or change its comment: the edit dialog hides the value and keeps it unless a new one is entered |
 | `infisical.secret.delete` | `delete` | Deleting secrets (`DELETE /secrets/:secretId`) |
 
 The backend also enforces the entity annotations server-side, independently of the policy:

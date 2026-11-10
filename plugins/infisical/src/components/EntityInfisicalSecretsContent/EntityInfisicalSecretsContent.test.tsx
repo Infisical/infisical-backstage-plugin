@@ -113,9 +113,9 @@ jest.mock('@material-ui/core', () => {
 
 // Mock SecretDialog component
 jest.mock('../SecretDialog', () => ({
-    SecretDialog: ({ open, mode, secret, onClose, onSave }: { open: boolean, mode: DialogMode, secret: InfisicalSecret, onClose: () => void, onSave: (secret: InfisicalSecretFormValues) => void }) => (
+    SecretDialog: ({ open, mode, secret, onClose, onSave, canReadValue }: { open: boolean, mode: DialogMode, secret: InfisicalSecret, onClose: () => void, onSave: (secret: InfisicalSecretFormValues) => void, canReadValue?: boolean }) => (
         open ? (
-            <div data-testid="secret-dialog" data-mode={mode}>
+            <div data-testid="secret-dialog" data-mode={mode} data-can-read-value={String(canReadValue)}>
                 <div data-testid="secret-data">
                     {secret && <div data-testid="secret-key">{secret.secretKey}</div>}
                 </div>
@@ -421,6 +421,23 @@ describe('EntityInfisicalSecretsContent', () => {
         expect(screen.getByText('••••••••••••')).toBeInTheDocument();
     });
 
+    it.each([
+        ['allowed', [], 'true'],
+        ['denied', [infisicalSecretValueReadPermission.name], 'false'],
+    ] as const)('tells the edit dialog whether values can be read when value.read is %s', async (_, denied, expected) => {
+        allowAllExcept(...denied);
+
+        renderContent();
+
+        await waitFor(() => {
+            expect(screen.getByTestId('secrets-table')).toBeInTheDocument();
+        });
+
+        fireEvent.click(screen.getByLabelText('edit'));
+
+        expect(screen.getByTestId('secret-dialog')).toHaveAttribute('data-can-read-value', expected);
+    });
+
     it('shows a permission message when listing secrets is forbidden', async () => {
         mockInfisicalApi.getSecrets.mockRejectedValueOnce(await responseError(403));
 
@@ -449,6 +466,67 @@ describe('EntityInfisicalSecretsContent', () => {
 
         expect(mockErrorApi.post).not.toHaveBeenCalled();
         expect(mockInfisicalApi.getSecrets).not.toHaveBeenCalled();
+    });
+
+    it('clears the permission message once a later environment lookup succeeds', async () => {
+        // e.g. the environment annotation moves from one whose identity is
+        // denied to one whose identity is allowed
+        mockInfisicalApi.getEnvironments.mockRejectedValueOnce(await responseError(403));
+
+        const renderWithEnvironment = (env: string) => (
+            <TestApiProvider apis={apis}>
+                <EntityInfisicalSecretsContent entityRef={mockEntityRef} environment={env} />
+            </TestApiProvider>
+        );
+
+        const { rerender } = render(renderWithEnvironment('development'));
+
+        await waitFor(() => {
+            expect(
+                screen.getByText("You don't have permission to view these secrets"),
+            ).toBeInTheDocument();
+        });
+
+        rerender(renderWithEnvironment('staging'));
+
+        await waitFor(() => {
+            expect(screen.getByTestId('secrets-table')).toBeInTheDocument();
+        });
+        expect(
+            screen.queryByText("You don't have permission to view these secrets"),
+        ).not.toBeInTheDocument();
+        expect(mockInfisicalApi.getEnvironments).toHaveBeenCalledTimes(2);
+        expect(mockInfisicalApi.getSecrets).toHaveBeenLastCalledWith(
+            mockEntityRef,
+            expect.objectContaining({ environment: 'staging' }),
+        );
+    });
+
+    it('ignores an environment lookup that resolves after the annotation changed', async () => {
+        let resolveFirst: (value: unknown) => void = () => {};
+        mockInfisicalApi.getEnvironments
+            .mockImplementationOnce(() => new Promise(resolve => { resolveFirst = resolve; }))
+            .mockResolvedValueOnce({ environments: mockEnvironments, name: 'current-workspace' });
+
+        const renderWithEnvironment = (env: string) => (
+            <TestApiProvider apis={apis}>
+                <EntityInfisicalSecretsContent entityRef={mockEntityRef} environment={env} />
+            </TestApiProvider>
+        );
+
+        const { rerender } = render(renderWithEnvironment('development'));
+        rerender(renderWithEnvironment('staging'));
+
+        await waitFor(() => {
+            expect(screen.getByText('current-workspace')).toBeInTheDocument();
+        });
+
+        // The first, outdated lookup finishes last and must not win
+        resolveFirst({ environments: mockEnvironments, name: 'stale-workspace' });
+        await new Promise(resolve => setTimeout(resolve, 0));
+
+        expect(screen.getByText('current-workspace')).toBeInTheDocument();
+        expect(screen.queryByText('stale-workspace')).not.toBeInTheDocument();
     });
 
     it('still reports non-permission errors', async () => {

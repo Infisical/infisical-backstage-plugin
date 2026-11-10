@@ -101,6 +101,10 @@ export function createMockInfisicalApi(): InfisicalApi {
         throw new Error('No entity reference provided');
       }
 
+      if (!secretData.secretValue) {
+        throw new Error('Key and value are required fields');
+      }
+
       const newSecret = createMockSecret(
         secretData.secretKey,
         secretData.secretValue,
@@ -132,13 +136,15 @@ export function createMockInfisicalApi(): InfisicalApi {
         throw new Error(`Secret with ID ${secretId} not found`);
       }
 
-      // Create updated secret
+      // Create updated secret; an omitted value keeps the current one
+      const current = secrets[secretIndex];
+      const value = secretData.secretValue ?? current.secretValue;
       const updatedSecret = {
-        ...secrets[secretIndex],
+        ...current,
         key: secretData.secretKey,
         secretKey: secretData.secretKey,
-        value: secretData.secretValue,
-        secretValue: secretData.secretValue,
+        value,
+        secretValue: value,
         comment: secretData.secretComment,
         secretComment: secretData.secretComment,
         updatedAt: new Date().toISOString(),

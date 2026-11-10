@@ -33,6 +33,7 @@ import {
   InfisicalSecretCreateRequest,
   InfisicalSecretDeleteHttpRequest,
   InfisicalSecretUpdateHttpRequest,
+  InfisicalSecretUpdateRequest,
 } from './types';
 
 /**
@@ -116,11 +117,21 @@ function bodyInput(body: InfisicalSecretDeleteHttpRequest): EntityScopedInput {
 /**
  * Builds the Infisical create/update payload. The project, environment and
  * path come from the resolved entity access, never from the request body.
+ * An update without `secretValue` keeps the stored value: the undefined
+ * field is dropped when the payload is serialized.
  */
 function secretPayload(
   body: InfisicalSecretCreateHttpRequest,
   access: ResolvedEntityAccess,
-): InfisicalSecretCreateRequest {
+): InfisicalSecretCreateRequest;
+function secretPayload(
+  body: InfisicalSecretUpdateHttpRequest,
+  access: ResolvedEntityAccess,
+): InfisicalSecretUpdateRequest;
+function secretPayload(
+  body: InfisicalSecretUpdateHttpRequest,
+  access: ResolvedEntityAccess,
+): InfisicalSecretUpdateRequest {
   return {
     secretKey: body.secretKey,
     secretValue: body.secretValue,
@@ -355,15 +366,26 @@ export async function createRouter(
    * Path parameters:
    *   secretId - The ID (key) of the secret to update
    *
-   * Body: same as POST /secrets
+   * Body: same as POST /secrets, except that `secretValue` is optional.
+   * Omitting it keeps the current value, so callers who may update but not
+   * read values can still rename a secret or change its comment. When it is
+   * present it must be a non-empty string.
    *
    * Requires `infisical.secret.update`.
    */
   router.patch('/secrets/:secretId', async (request, response) => {
     const body = (request.body ?? {}) as InfisicalSecretUpdateHttpRequest;
 
-    if (!body.secretKey || !body.secretValue) {
-      throw new InputError('Key and value are required fields');
+    if (!body.secretKey) {
+      throw new InputError('Key is a required field');
+    }
+    if (
+      body.secretValue !== undefined &&
+      (typeof body.secretValue !== 'string' || body.secretValue === '')
+    ) {
+      throw new InputError(
+        'Value must be a non-empty string; omit it to keep the current value',
+      );
     }
 
     const { access, api, context } = await entityScoped(

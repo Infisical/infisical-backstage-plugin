@@ -682,15 +682,51 @@ describe('infisical router', () => {
       expect(mockInfisicalApi.updateSecret).not.toHaveBeenCalled();
     });
 
-    it('returns 400 when required fields are missing', async () => {
+    it('keeps the current value when secretValue is omitted', async () => {
+      // e.g. renaming a secret or editing its comment without value.read
+      allowOnly(infisicalSecretUpdatePermission.name);
+      const { secretValue: _omitted, ...withoutValue } = secretData;
+
+      const response = await request(app)
+        .patch('/secrets/secret1')
+        .send({ ...withoutValue, secretKey: 'RENAMED', secretComment: 'new' });
+
+      expect(response.status).toBe(200);
+      const [payload] = mockInfisicalApi.updateSecret.mock.calls[0];
+      expect(payload).toEqual(
+        expect.objectContaining({
+          secretKey: 'RENAMED',
+          secretComment: 'new',
+        }),
+      );
+      expect(payload.secretValue).toBeUndefined();
+    });
+
+    it('returns 400 when the key is missing', async () => {
       const response = await request(app).patch('/secrets/secret1').send({
         entityRef: ENTITY_REF,
+        secretValue: 'updated-value',
       });
 
       expect(response.status).toBe(400);
+      expect(response.body.error.message).toContain('Key is a required field');
+      expect(mockInfisicalApi.updateSecret).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['an empty string', ''],
+      ['null', null],
+      ['a number', 42],
+    ])('returns 400 when secretValue is %s', async (_, secretValue) => {
+      const response = await request(app)
+        .patch('/secrets/secret1')
+        .send({ ...secretData, secretValue });
+
+      expect(response.status).toBe(400);
       expect(response.body.error.message).toContain(
-        'Key and value are required fields',
+        'omit it to keep the current value',
       );
+      expect(mockInfisicalApi.updateSecret).not.toHaveBeenCalled();
     });
 
     it('returns 404 when secretId is missing in the path', async () => {

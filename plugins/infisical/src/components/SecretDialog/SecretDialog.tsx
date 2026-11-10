@@ -27,9 +27,32 @@ const useStyles = makeStyles(theme => ({
 }));
 
 /**
+ * Value Infisical returns in place of a value it was asked not to reveal
+ */
+const HIDDEN_VALUE = '<hidden-by-infisical>';
+
+const HIDDEN_VALUE_HINT =
+    "You can't view this value. Leave it empty to keep it, or enter a new value to replace it.";
+
+/**
  * Dialog mode for secret operations
  */
 export type DialogMode = 'create' | 'edit' | 'view';
+
+/**
+ * Internal form state; every field is a string so it can back a text input
+ */
+interface FormState {
+    secretKey: string;
+    secretValue: string;
+    secretComment: string;
+}
+
+const EMPTY_FORM: FormState = {
+    secretKey: '',
+    secretValue: '',
+    secretComment: '',
+};
 
 /**
  * Props for SecretDialog component
@@ -47,6 +70,12 @@ export interface SecretDialogProps {
     onSave: (formData: InfisicalSecretFormValues) => Promise<void>;
     /** Function to fetch secret value */
     fetchSecretValue: (secretId: string, secretKey: string) => Promise<InfisicalSecret | null | undefined>;
+    /**
+     * Whether the user may read secret values. When false, the value of an
+     * existing secret is neither fetched nor shown, and saving an edit with
+     * the value left empty keeps the current value. Defaults to true.
+     */
+    canReadValue?: boolean;
 }
 
 /**
@@ -58,20 +87,21 @@ export const SecretDialog: React.FC<SecretDialogProps> = ({
     secret,
     onClose,
     onSave,
-    fetchSecretValue
+    fetchSecretValue,
+    canReadValue = true,
 }) => {
     const classes = useStyles();
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    const [formValues, setFormValues] = useState<InfisicalSecretFormValues>({
-        secretKey: '',
-        secretValue: '',
-        secretComment: '',
-    });
-    
+    const [formValues, setFormValues] = useState<FormState>(EMPTY_FORM);
+
+    // The existing value is unknown to the user, so an empty value field
+    // means "keep the current value" rather than "missing value"
+    const valueHidden = mode !== 'create' && !canReadValue;
+
     useEffect(() => {
-        if (open && secret && secret.secretValue === "<hidden-by-infisical>") {
+        if (open && secret && !valueHidden && secret.secretValue === HIDDEN_VALUE) {
             setIsLoading(true);
             fetchSecretValue(secret.id, secret.secretKey).then((secretResponse) => {
                 if (!secretResponse) {
@@ -87,7 +117,7 @@ export const SecretDialog: React.FC<SecretDialogProps> = ({
                 setIsLoading(false);
             });
         }
-    }, [open, secret, fetchSecretValue]);
+    }, [open, secret, fetchSecretValue, valueHidden]);
 
     // Form validation
     const [formErrors, setFormErrors] = useState({
@@ -100,15 +130,12 @@ export const SecretDialog: React.FC<SecretDialogProps> = ({
         if (secret && (mode === 'edit' || mode === 'view')) {
             setFormValues({
                 secretKey: secret.secretKey,
-                secretValue: secret.secretValue,
+                // Whatever the listing carries is a placeholder, not the value
+                secretValue: valueHidden ? '' : secret.secretValue,
                 secretComment: secret.secretComment || '',
             });
         } else if (mode === 'create') {
-            setFormValues({
-                secretKey: '',
-                secretValue: '',
-                secretComment: '',
-            });
+            setFormValues(EMPTY_FORM);
         }
 
         setError(null);
@@ -116,19 +143,21 @@ export const SecretDialog: React.FC<SecretDialogProps> = ({
             secretKey: false,
             secretValue: false,
         });
-    }, [secret, mode, open]);
+    }, [secret, mode, open, valueHidden]);
+
+    const keepsCurrentValue = valueHidden && formValues.secretValue.trim() === '';
 
     const validateForm = (): boolean => {
         const errors = {
             secretKey: formValues.secretKey.trim() === '',
-            secretValue: formValues.secretValue.trim() === '',
+            secretValue: !valueHidden && formValues.secretValue.trim() === '',
         };
 
         setFormErrors(errors);
         return !errors.secretKey && !errors.secretValue;
     };
 
-    const handleChange = (field: keyof InfisicalSecretFormValues) => (
+    const handleChange = (field: keyof FormState) => (
         event: React.ChangeEvent<HTMLInputElement | { value: unknown }>,
     ) => {
         const value = event.target.value as string;
@@ -156,8 +185,14 @@ export const SecretDialog: React.FC<SecretDialogProps> = ({
         setIsLoading(true);
         setError(null);
 
+        // Omitting the value tells the backend to keep the stored one
+        const { secretValue, ...withoutValue } = formValues;
+        const formData: InfisicalSecretFormValues = keepsCurrentValue
+            ? withoutValue
+            : { ...withoutValue, secretValue };
+
         try {
-            await onSave(formValues);
+            await onSave(formData);
             onClose();
         } catch (err) {
             setError(err instanceof Error ? err.message : 'An unknown error occurred');
@@ -174,6 +209,13 @@ export const SecretDialog: React.FC<SecretDialogProps> = ({
 
     const isViewOnly = mode === 'view';
     const isValid = !formErrors.secretKey && !formErrors.secretValue;
+
+    let valueHelperText = '';
+    if (formErrors.secretValue) {
+        valueHelperText = 'Value is required';
+    } else if (valueHidden && !isViewOnly) {
+        valueHelperText = HIDDEN_VALUE_HINT;
+    }
 
     return (
         <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
@@ -208,10 +250,11 @@ export const SecretDialog: React.FC<SecretDialogProps> = ({
                         value={formValues.secretValue}
                         onChange={handleChange('secretValue')}
                         disabled={isViewOnly || isLoading}
-                        required
+                        required={!valueHidden}
+                        placeholder={valueHidden ? 'Hidden' : undefined}
                         fullWidth
                         error={formErrors.secretValue}
-                        helperText={formErrors.secretValue ? 'Value is required' : ''}
+                        helperText={valueHelperText}
                         inputProps={{
                             'aria-label': 'Secret value',
                             'data-testid': 'secret-value-input',
