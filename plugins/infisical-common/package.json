@@ -1,6 +1,6 @@
 {
   "name": "@infisical/backstage-plugin-infisical-common",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Common functionalities for the infisical plugin",
   "license": "Apache-2.0",
   "main": "src/index.ts",
