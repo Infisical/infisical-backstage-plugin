@@ -150,7 +150,8 @@ export class InfisicalApiClient {
   private readonly baseUrl: string;
   private readonly logger: LoggerService;
   private credentials: AuthCredentials;
-  private tokenRefreshInProgress: boolean = false;
+  /** The in-flight login, shared by concurrent requests */
+  private tokenRefresh?: Promise<void>;
   private maxRetries: number = 3;
   private retryDelay: number = 1000; // 1 second initial delay
   private retryStatusCodes: number[] = [408, 429, 500, 502, 503, 504];
@@ -246,15 +247,7 @@ export class InfisicalApiClient {
    * @internal
    */
   private async authenticateWithClientCredentials(): Promise<void> {
-    if (this.tokenRefreshInProgress) {
-      this.logger.debug('Token refresh already in progress, waiting...');
-      await new Promise(resolve => setTimeout(resolve, 500));
-      return;
-    }
-
     try {
-      this.tokenRefreshInProgress = true;
-
       if (!this.credentials.clientId || !this.credentials.clientSecret) {
         throw new Error(
           'Missing client ID or client secret for authentication',
@@ -301,8 +294,6 @@ export class InfisicalApiClient {
     } catch (error) {
       this.logger.error(`Authentication failed: ${error}`);
       throw error;
-    } finally {
-      this.tokenRefreshInProgress = false;
     }
   }
 
@@ -322,8 +313,15 @@ export class InfisicalApiClient {
       Date.now() >= this.credentials.tokenExpiresAt;
 
     if (isTokenExpired) {
-      this.logger.info('Access token expired or not present, refreshing...');
-      await this.authenticateWithClientCredentials();
+      if (!this.tokenRefresh) {
+        this.logger.info('Access token expired or not present, refreshing...');
+        this.tokenRefresh = this.authenticateWithClientCredentials().finally(
+          () => {
+            this.tokenRefresh = undefined;
+          },
+        );
+      }
+      await this.tokenRefresh;
     }
   }
 
@@ -435,9 +433,7 @@ export class InfisicalApiClient {
     this.logger.debug(`Making ${method} request to ${url}`);
 
     try {
-      // Ensure we have a valid token before making the request
-      await this.ensureValidToken();
-
+      // Refreshes the access token first when it has expired
       const authHeader = await this.getAuthorizationHeader();
 
       const headers = {

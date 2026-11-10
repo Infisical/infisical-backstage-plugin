@@ -1,5 +1,5 @@
 import { BackstageCredentials } from '@backstage/backend-plugin-api';
-import { Entity, parseEntityRef } from '@backstage/catalog-model';
+import { parseEntityRef } from '@backstage/catalog-model';
 import { InputError, NotAllowedError, NotFoundError } from '@backstage/errors';
 import { CatalogService } from '@backstage/plugin-catalog-node';
 import {
@@ -8,6 +8,8 @@ import {
   INFISICAL_PROJECT_ANNOTATION,
   INFISICAL_SECRET_PATH_ANNOTATION,
   getInfisicalIdentityAnnotation,
+  normalizeSecretPath,
+  parseSecretPathAnnotation,
 } from '@infisical/backstage-plugin-infisical-common';
 
 /**
@@ -30,34 +32,6 @@ export interface ResolvedEntityAccess {
 }
 
 /**
- * Normalizes a secret path to the form `/a/b` (leading slash, no trailing
- * slash, no empty segments). Rejects traversal attempts.
- * @public
- */
-export function normalizeSecretPath(raw: string | undefined): string {
-  if (raw === undefined || raw === null) {
-    return '/';
-  }
-  if (typeof raw !== 'string') {
-    throw new InputError('path must be a string');
-  }
-  const trimmed = raw.trim();
-  if (trimmed === '' || trimmed === '/') {
-    return '/';
-  }
-  if (trimmed.includes('\\')) {
-    throw new InputError('path must not contain backslashes');
-  }
-  const segments = trimmed.split('/').filter(segment => segment !== '');
-  for (const segment of segments) {
-    if (segment === '.' || segment === '..') {
-      throw new InputError('path must not contain relative segments');
-    }
-  }
-  return segments.length === 0 ? '/' : `/${segments.join('/')}`;
-}
-
-/**
  * Resolves the secret path a caller may access given the entity's
  * `infisical/secretPath` annotation.
  *
@@ -70,14 +44,12 @@ export function resolveSecretPath(
   annotation: string | undefined,
   requested: string | undefined,
 ): string {
-  if (!annotation || annotation.trim() === '') {
+  const restriction = parseSecretPathAnnotation(annotation);
+  if (!restriction) {
     return normalizeSecretPath(requested);
   }
 
-  const allowSubfolders = annotation.trim().startsWith('+');
-  const basePath = normalizeSecretPath(
-    allowSubfolders ? annotation.trim().slice(1) : annotation,
-  );
+  const { basePath, allowSubfolders } = restriction;
 
   if (requested === undefined || requested === '') {
     return basePath;
@@ -188,9 +160,7 @@ export async function resolveEntityAccess(
     requestedPath,
   } = options;
 
-  const entity: Entity | undefined = await catalog.getEntityByRef(entityRef, {
-    credentials,
-  });
+  const entity = await catalog.getEntityByRef(entityRef, { credentials });
 
   const annotations = entity?.metadata.annotations ?? {};
   const workspaceId = annotations[INFISICAL_PROJECT_ANNOTATION];

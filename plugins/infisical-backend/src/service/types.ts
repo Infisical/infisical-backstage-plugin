@@ -90,8 +90,6 @@ export interface InfisicalSecretCreateRequest {
   /** Type of the secret (e.g., "shared", "personal") */
   type?: string;
   /** Optional comment about the secret */
-  comment?: string;
-  /** Optional comment about the secret (field name used by the Infisical API) */
   secretComment?: string;
   /** Path where the secret should be stored */
   secretPath?: string;
@@ -180,32 +178,14 @@ export interface InfisicalSecretDeleteRequest {
 }
 
 /**
- * Fields shared by all entity-scoped HTTP requests.
- * @public
- */
-export interface InfisicalEntityScopedRequest {
-  /** Reference of the catalog entity the secrets are accessed through */
-  entityRef: string;
-}
-
-/**
- * HTTP request body for creating a secret through the Backstage API.
+ * HTTP request body for creating a secret through the Backstage API. The
+ * project comes from the entity's annotations rather than the caller.
  * @public
  */
 export interface InfisicalSecretCreateHttpRequest
-  extends InfisicalEntityScopedRequest {
-  /** Key/name of the secret */
-  secretKey: string;
-  /** Value of the secret */
-  secretValue: string;
-  /** Optional comment about the secret */
-  secretComment?: string;
-  /** Type of the secret (e.g., "shared", "personal") */
-  type?: string;
-  /** Path where the secret should be stored */
-  secretPath?: string;
-  /** Environment where the secret should be available */
-  environment?: string;
+  extends Omit<InfisicalSecretCreateRequest, 'workspaceId'> {
+  /** Reference of the catalog entity the secrets are accessed through */
+  entityRef: string;
 }
 
 /**
@@ -218,10 +198,7 @@ export type InfisicalSecretUpdateHttpRequest = InfisicalSecretCreateHttpRequest;
  * HTTP request body for deleting a secret through the Backstage API.
  * @public
  */
-export interface InfisicalSecretDeleteHttpRequest
-  extends InfisicalEntityScopedRequest {
-  /** Environment where the secret is available */
-  environment?: string;
-  /** Path where the secret is stored */
-  secretPath?: string;
-}
+export type InfisicalSecretDeleteHttpRequest = Pick<
+  InfisicalSecretCreateHttpRequest,
+  'entityRef' | 'environment' | 'secretPath'
+>;

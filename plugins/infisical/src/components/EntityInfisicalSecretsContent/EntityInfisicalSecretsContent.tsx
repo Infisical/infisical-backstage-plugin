@@ -3,7 +3,7 @@
  * Main component for displaying and managing Infisical secrets
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Button,
   Dialog,
@@ -47,11 +47,13 @@ import {
 import { useApi, alertApiRef, errorApiRef, ErrorApiError } from '@backstage/core-plugin-api';
 import { ResponseError } from '@backstage/errors';
 import { usePermission } from '@backstage/plugin-permission-react';
+import { ResourcePermission } from '@backstage/plugin-permission-common';
 import {
   infisicalSecretCreatePermission,
   infisicalSecretDeletePermission,
   infisicalSecretUpdatePermission,
   infisicalSecretValueReadPermission,
+  parseSecretPathAnnotation,
 } from '@infisical/backstage-plugin-infisical-common';
 import { infisicalApiRef } from '../../api/InfisicalClient/InfisicalClient';
 import { InfisicalSecret, InfisicalSecretFormValues, InfisicalFolder, InfisicalEnvironment } from '../../api/types';
@@ -239,6 +241,32 @@ export interface EntityInfisicalSecretsContentProps {
 const isForbidden = (err: unknown): boolean =>
   err instanceof ResponseError && err.response.status === 403;
 
+/**
+ * Whether the current user may perform `permission` on the entity. Only used
+ * to hide controls: the backend enforces permissions. While the check is
+ * still loading this returns false, so the control stays hidden.
+ */
+const useAllowed = (permission: ResourcePermission, entityRef: string) =>
+  usePermission({ permission, resourceRef: entityRef }).allowed;
+
+/**
+ * Reads the navigation limits from the `infisical/secretPath` annotation.
+ * An invalid annotation imposes no limit here; the backend rejects every
+ * request for it and the error is shown instead.
+ */
+function navigationLimits(secretPath?: string) {
+  let restriction;
+  try {
+    restriction = parseSecretPathAnnotation(secretPath);
+  } catch {
+    restriction = undefined;
+  }
+  return {
+    basePath: restriction?.basePath ?? '/',
+    allowNavigation: restriction?.allowSubfolders ?? true,
+  };
+}
+
 const PERMISSION_DENIED_TITLE = "You don't have permission to view these secrets";
 const PERMISSION_DENIED_DESCRIPTION =
   'Ask the owner of this entity or your Backstage administrator for access to Infisical secrets.';
@@ -264,26 +292,13 @@ export const EntityInfisicalSecretsContent = ({ entityRef, environment, secretPa
   const alertApi = useApi(alertApiRef);
   const errorApi = useApi(errorApiRef);
 
-  // Permission checks are cosmetic only: the backend enforces them. While a
-  // check is still loading the corresponding control is hidden.
-  const { allowed: canCreate } = usePermission({
-    permission: infisicalSecretCreatePermission,
-    resourceRef: entityRef,
-  });
-  const { allowed: canUpdate } = usePermission({
-    permission: infisicalSecretUpdatePermission,
-    resourceRef: entityRef,
-  });
-  const { allowed: canDelete } = usePermission({
-    permission: infisicalSecretDeletePermission,
-    resourceRef: entityRef,
-  });
-  const { allowed: canReadValues } = usePermission({
-    permission: infisicalSecretValueReadPermission,
-    resourceRef: entityRef,
-  });
+  const canCreate = useAllowed(infisicalSecretCreatePermission, entityRef);
+  const canUpdate = useAllowed(infisicalSecretUpdatePermission, entityRef);
+  const canDelete = useAllowed(infisicalSecretDeletePermission, entityRef);
+  const canReadValues = useAllowed(infisicalSecretValueReadPermission, entityRef);
 
-  // Set when the backend denied listing environments or secrets
+  // Set when the backend denied listing environments. A denied secrets
+  // listing surfaces as the `error` of the secrets fetch instead.
   const [accessDenied, setAccessDenied] = useState(false);
 
   // State for environments
@@ -292,14 +307,15 @@ export const EntityInfisicalSecretsContent = ({ entityRef, environment, secretPa
   const [loadingEnvironments, setLoadingEnvironments] = useState(true);
   const [cardTitle, setCardTitle] = useState<string>("Infisical Secrets");
 
-  // Base path that cannot be navigated above (derived from secretPath prop)
-  const [basePath, setBasePath] = useState('/');
+  // Base path that cannot be navigated above, and whether subfolders can be
+  // opened at all, from the secretPath annotation
+  const { basePath, allowNavigation } = useMemo(
+    () => navigationLimits(secretPath),
+    [secretPath],
+  );
 
   // State for current path navigation
-  const [currentPath, setCurrentPath] = useState('/');
-
-  // Navigation control based on secretPath parameter
-  const [allowNavigation, setAllowNavigation] = useState(true);
+  const [currentPath, setCurrentPath] = useState(basePath);
 
   // Determine if environment is locked (provided as prop)
   const isEnvironmentLocked = Boolean(environment);
@@ -323,39 +339,10 @@ export const EntityInfisicalSecretsContent = ({ entityRef, environment, secretPa
   const [secretValues, setSecretValues] = useState<Record<string, string>>({});
   const [loadingSecretValues, setLoadingSecretValues] = useState<Record<string, boolean>>({});
 
-  // Initialize base path, current path, and navigation permissions based on secretPath prop
+  // Start over at the base path when the annotation changes
   useEffect(() => {
-    if (!secretPath) {
-      // No secretPath provided - allow full navigation
-      setAllowNavigation(true);
-      setBasePath('/');
-      setCurrentPath('/');
-      return;
-    }
-
-    if (secretPath.startsWith('+')) {
-      // secretPath starts with "+" - allow navigation, remove "+" prefix
-      setAllowNavigation(true);
-      const pathWithoutPlus = secretPath.slice(1);
-      const normalizedPath = pathWithoutPlus.startsWith('/') ? pathWithoutPlus : `/${pathWithoutPlus}`;
-      const cleanPath = normalizedPath.endsWith('/') && normalizedPath !== '/'
-        ? normalizedPath.slice(0, -1)
-        : normalizedPath;
-      
-      setBasePath(cleanPath);
-      setCurrentPath(cleanPath);
-    } else {
-      // secretPath provided without "+" - restrict navigation to current level only
-      setAllowNavigation(false);
-      const normalizedPath = secretPath.startsWith('/') ? secretPath : `/${secretPath}`;
-      const cleanPath = normalizedPath.endsWith('/') && normalizedPath !== '/'
-        ? normalizedPath.slice(0, -1)
-        : normalizedPath;
-
-      setBasePath(cleanPath);
-      setCurrentPath(cleanPath);
-    }
-  }, [secretPath]);
+    setCurrentPath(basePath);
+  }, [basePath]);
 
   // Fetch environments first
   useEffect(() => {
@@ -405,19 +392,14 @@ export const EntityInfisicalSecretsContent = ({ entityRef, environment, secretPa
   // Load secrets when component mounts or currentPath or selectedEnvironment changes
   useEffect(() => {
     if (selectedEnvironment) {
-      fetchSecrets().catch(err => {
-        if (isForbidden(err)) {
-          setAccessDenied(true);
-        } else {
-          errorApi.post(err as ErrorApiError);
-        }
-      });
+      // useAsyncFn never rejects: failures land in `error` and render below
+      fetchSecrets();
 
       setSecretValues({});
       setVisibleValues({});
       setLoadingSecretValues({});
     }
-  }, [fetchSecrets, errorApi, entityRef, currentPath, selectedEnvironment]);
+  }, [fetchSecrets, entityRef, currentPath, selectedEnvironment]);
 
   const handleOpenDialog = useCallback((mode: DialogMode, secret?: InfisicalSecret) => {
     setDialogMode(mode);
@@ -928,7 +910,7 @@ export const EntityInfisicalSecretsContent = ({ entityRef, environment, secretPa
     return <Progress />;
   }
 
-  if (accessDenied || (error && isForbidden(error))) {
+  if (accessDenied || isForbidden(error)) {
     return (
       <InfoCard title={cardTitle}>
         <EmptyState

@@ -140,6 +140,7 @@ describe('infisical router', () => {
         },
       }),
       httpAuth: mockServices.httpAuth(),
+      auth: mockServices.auth(),
       permissions,
       catalog: { getEntityByRef } as unknown as CatalogService,
     });
@@ -1049,6 +1050,7 @@ describe('infisical router', () => {
           },
         }),
         httpAuth: mockServices.httpAuth(),
+        auth: mockServices.auth(),
         permissions,
         catalog: { getEntityByRef } as unknown as CatalogService,
       });

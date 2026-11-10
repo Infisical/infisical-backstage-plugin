@@ -1,4 +1,5 @@
 import {
+  AuthService,
   BackstageCredentials,
   HttpAuthService,
   LoggerService,
@@ -20,7 +21,6 @@ import {
   infisicalSecretUpdatePermission,
   infisicalSecretValueReadPermission,
 } from '@infisical/backstage-plugin-infisical-common';
-import { InfisicalApiClient, InfisicalRequestContext } from './InfisicalApi';
 import {
   ResolvedEntityAccess,
   resolveEntityAccess,
@@ -30,6 +30,7 @@ import { InfisicalIdentityRegistry } from './identities';
 import {
   InfisicalSecret,
   InfisicalSecretCreateHttpRequest,
+  InfisicalSecretCreateRequest,
   InfisicalSecretDeleteHttpRequest,
   InfisicalSecretUpdateHttpRequest,
 } from './types';
@@ -45,6 +46,8 @@ export interface RouterOptions {
   config: Config;
   /** Used to extract the caller's credentials */
   httpAuth: HttpAuthService;
+  /** Used to identify the caller for the Infisical audit log */
+  auth: AuthService;
   /** Used to authorize the caller against the entity */
   permissions: PermissionsService;
   /** Used to look up entities and their Infisical annotations */
@@ -53,20 +56,24 @@ export interface RouterOptions {
 
 const REDACTED_VALUE = '';
 
-/**
- * Describes the caller for the Infisical audit log, e.g. `user:default/jane`.
- */
-function principalRef(credentials: BackstageCredentials): string {
-  const principal = credentials.principal as
-    | { type?: string; userEntityRef?: string; subject?: string }
-    | undefined;
-  if (principal?.type === 'user' && principal.userEntityRef) {
-    return principal.userEntityRef;
-  }
-  if (principal?.type === 'service' && principal.subject) {
-    return `service:${principal.subject}`;
-  }
-  return 'anonymous';
+/** The caller-supplied coordinates every route is scoped by. */
+interface EntityScopedInput {
+  entityRef: unknown;
+  environment?: string;
+  path?: string;
+}
+
+function redactValues(secrets: InfisicalSecret[]): InfisicalSecret[] {
+  return secrets.map(secret => {
+    const redacted: InfisicalSecret & { secretValue?: string } = {
+      ...secret,
+      value: REDACTED_VALUE,
+    };
+    if ('secretValue' in redacted) {
+      redacted.secretValue = REDACTED_VALUE;
+    }
+    return redacted;
+  });
 }
 
 function queryString(value: unknown): string | undefined {
@@ -90,6 +97,41 @@ function optionalBodyString(value: unknown, name: string): string | undefined {
   return value;
 }
 
+function queryInput(request: express.Request): EntityScopedInput {
+  return {
+    entityRef: request.query.entityRef,
+    environment: queryString(request.query.environment),
+    path: queryString(request.query.path),
+  };
+}
+
+function bodyInput(body: InfisicalSecretDeleteHttpRequest): EntityScopedInput {
+  return {
+    entityRef: body.entityRef,
+    environment: optionalBodyString(body.environment, 'environment'),
+    path: body.secretPath,
+  };
+}
+
+/**
+ * Builds the Infisical create/update payload. The project, environment and
+ * path come from the resolved entity access, never from the request body.
+ */
+function secretPayload(
+  body: InfisicalSecretCreateHttpRequest,
+  access: ResolvedEntityAccess,
+): InfisicalSecretCreateRequest {
+  return {
+    secretKey: body.secretKey,
+    secretValue: body.secretValue,
+    secretComment: body.secretComment,
+    type: body.type,
+    workspaceId: access.workspaceId,
+    secretPath: access.path,
+    environment: access.environment,
+  };
+}
+
 /**
  * Creates a router for the Infisical backend plugin.
  *
@@ -106,7 +148,7 @@ function optionalBodyString(value: unknown, name: string): string | undefined {
 export async function createRouter(
   options: RouterOptions,
 ): Promise<express.Router> {
-  const { logger, config, httpAuth, permissions, catalog } = options;
+  const { logger, config, httpAuth, auth, permissions, catalog } = options;
   const router = Router();
 
   router.use(express.json());
@@ -114,51 +156,38 @@ export async function createRouter(
   const identities = new InfisicalIdentityRegistry({ config, logger });
 
   /**
-   * Evaluates several permissions against the entity in a single
-   * permission-backend round trip.
+   * Describes the caller for the Infisical audit log, e.g. `user:default/jane`.
    */
-  async function isAllowed(
-    requested: ResourcePermission[],
-    entityRef: string,
-    credentials: BackstageCredentials,
-  ): Promise<boolean[]> {
-    const decisions = await permissions.authorize(
-      requested.map(permission => ({ permission, resourceRef: entityRef })),
-      { credentials },
-    );
-    return requested.map(
-      (_, index) => decisions[index]?.result === AuthorizeResult.ALLOW,
-    );
-  }
-
-  function notAllowed(permission: ResourcePermission, entityRef: string) {
-    return new NotAllowedError(
-      `Not allowed to perform '${permission.name}' on '${entityRef}'`,
-    );
-  }
-
-  async function authorize(
-    permission: ResourcePermission,
-    entityRef: string,
-    credentials: BackstageCredentials,
-  ): Promise<void> {
-    const [allowed] = await isAllowed([permission], entityRef, credentials);
-    if (!allowed) {
-      throw notAllowed(permission, entityRef);
+  function principalRef(credentials: BackstageCredentials): string {
+    if (auth.isPrincipal(credentials, 'user')) {
+      return credentials.principal.userEntityRef;
     }
+    if (auth.isPrincipal(credentials, 'service')) {
+      return `service:${credentials.principal.subject}`;
+    }
+    return 'anonymous';
   }
 
   /**
-   * Validates the entity reference, loads the entity as the caller and
-   * resolves the Infisical coordinates from its annotations.
+   * Runs the checks every route shares, always in this order:
+   *
+   * 1. Validates the entity reference (400).
+   * 2. Loads the entity as the caller and resolves the Infisical project,
+   *    environment, path and identity from its annotations (404/403/400).
+   * 3. Authorizes `permission` against the entity (403). `optional`
+   *    permissions are evaluated in the same round trip and returned.
+   * 4. Picks the client for the entity's machine identity (404/403). This
+   *    runs only after the permission check so that callers without
+   *    permission learn nothing about the identity configuration.
    */
-  async function resolveAccess(
+  async function entityScoped(
     request: express.Request,
-    input: {
-      entityRef: unknown;
-      environment?: string;
-      path?: string;
-    },
+    input: EntityScopedInput,
+    permission: ResourcePermission,
+    checks: {
+      optional?: ResourcePermission[];
+      requireEnvironment?: boolean;
+    } = {},
   ) {
     const entityRef = validateEntityRef(input.entityRef);
     const credentials = await httpAuth.credentials(request);
@@ -169,36 +198,31 @@ export async function createRouter(
       requestedEnvironment: input.environment,
       requestedPath: input.path,
     });
-    return { entityRef, credentials, access };
-  }
 
-  /**
-   * Picks the Infisical client for the entity's machine identity and builds
-   * the audit context. Call only after the permission check passed.
-   */
-  function clientFor(
-    access: ResolvedEntityAccess,
-    entityRef: string,
-    credentials: BackstageCredentials,
-  ): { api: InfisicalApiClient; context: InfisicalRequestContext } {
-    const api = identities.getClient(access.identity, entityRef);
+    if (checks.requireEnvironment && !access.environment) {
+      throw new InputError('environment is required');
+    }
+
+    const requested = [permission, ...(checks.optional ?? [])];
+    const decisions = await permissions.authorize(
+      requested.map(p => ({ permission: p, resourceRef: entityRef })),
+      { credentials },
+    );
+    const [allowed, ...optionalAllowed] = requested.map(
+      (_, index) => decisions[index]?.result === AuthorizeResult.ALLOW,
+    );
+    if (!allowed) {
+      throw new NotAllowedError(
+        `Not allowed to perform '${permission.name}' on '${entityRef}'`,
+      );
+    }
+
     return {
-      api,
+      access,
+      api: identities.getClient(access.identity, entityRef),
       context: { userRef: principalRef(credentials), entityRef },
+      optionalAllowed,
     };
-  }
-
-  function redactValues(secrets: InfisicalSecret[]): InfisicalSecret[] {
-    return secrets.map(secret => {
-      const redacted: InfisicalSecret & { secretValue?: string } = {
-        ...secret,
-        value: REDACTED_VALUE,
-      };
-      if ('secretValue' in redacted) {
-        redacted.secretValue = REDACTED_VALUE;
-      }
-      return redacted;
-    });
   }
 
   /**
@@ -213,22 +237,18 @@ export async function createRouter(
    * `infisical.secret.value.read` is also allowed.
    */
   router.get('/secrets', async (request, response) => {
-    const { entityRef, credentials, access } = await resolveAccess(request, {
-      entityRef: request.query.entityRef,
-      environment: queryString(request.query.environment),
-      path: queryString(request.query.path),
-    });
-
-    const [canRead, canReadValues] = await isAllowed(
-      [infisicalSecretReadPermission, infisicalSecretValueReadPermission],
-      entityRef,
-      credentials,
+    const {
+      access,
+      api,
+      context,
+      optionalAllowed: [canReadValues],
+    } = await entityScoped(
+      request,
+      queryInput(request),
+      infisicalSecretReadPermission,
+      { optional: [infisicalSecretValueReadPermission] },
     );
-    if (!canRead) {
-      throw notAllowed(infisicalSecretReadPermission, entityRef);
-    }
 
-    const { api, context } = clientFor(access, entityRef, credentials);
     const result = await api.getSecrets(
       access.workspaceId,
       access.path === '/' ? undefined : access.path,
@@ -256,24 +276,15 @@ export async function createRouter(
    * Requires `infisical.secret.value.read`.
    */
   router.get('/secrets/:secretId', async (request, response) => {
-    const { secretId } = request.params;
+    const { access, api, context } = await entityScoped(
+      request,
+      queryInput(request),
+      infisicalSecretValueReadPermission,
+    );
 
-    if (!secretId || typeof secretId !== 'string') {
-      throw new InputError('secretId is required');
-    }
-
-    const { entityRef, credentials, access } = await resolveAccess(request, {
-      entityRef: request.query.entityRef,
-      environment: queryString(request.query.environment),
-      path: queryString(request.query.path),
-    });
-
-    await authorize(infisicalSecretValueReadPermission, entityRef, credentials);
-
-    const { api, context } = clientFor(access, entityRef, credentials);
     const secret = await api.getSecretById(
       access.workspaceId,
-      secretId,
+      request.params.secretId,
       {
         environment: access.environment,
         path: access.path === '/' ? undefined : access.path,
@@ -293,13 +304,12 @@ export async function createRouter(
    * environment only that environment is returned.
    */
   router.get('/environments', async (request, response) => {
-    const { entityRef, credentials, access } = await resolveAccess(request, {
-      entityRef: request.query.entityRef,
-    });
+    const { access, api, context } = await entityScoped(
+      request,
+      { entityRef: request.query.entityRef },
+      infisicalSecretReadPermission,
+    );
 
-    await authorize(infisicalSecretReadPermission, entityRef, credentials);
-
-    const { api, context } = clientFor(access, entityRef, credentials);
     const project = await api.getEnvironments(access.workspaceId, context);
 
     const environments = access.environment
@@ -329,27 +339,13 @@ export async function createRouter(
       throw new InputError('Key and value are required fields');
     }
 
-    const { entityRef, credentials, access } = await resolveAccess(request, {
-      entityRef: body.entityRef,
-      environment: optionalBodyString(body.environment, 'environment'),
-      path: body.secretPath,
-    });
-
-    await authorize(infisicalSecretCreatePermission, entityRef, credentials);
-
-    const { api, context } = clientFor(access, entityRef, credentials);
-    const secret = await api.createSecret(
-      {
-        secretKey: body.secretKey,
-        secretValue: body.secretValue,
-        secretComment: body.secretComment,
-        type: body.type,
-        workspaceId: access.workspaceId,
-        secretPath: access.path,
-        environment: access.environment,
-      },
-      context,
+    const { access, api, context } = await entityScoped(
+      request,
+      bodyInput(body),
+      infisicalSecretCreatePermission,
     );
+
+    const secret = await api.createSecret(secretPayload(body, access), context);
     response.status(201).json(secret);
   });
 
@@ -364,37 +360,21 @@ export async function createRouter(
    * Requires `infisical.secret.update`.
    */
   router.patch('/secrets/:secretId', async (request, response) => {
-    const { secretId } = request.params;
     const body = (request.body ?? {}) as InfisicalSecretUpdateHttpRequest;
-
-    if (!secretId) {
-      throw new InputError('Secret ID is required');
-    }
 
     if (!body.secretKey || !body.secretValue) {
       throw new InputError('Key and value are required fields');
     }
 
-    const { entityRef, credentials, access } = await resolveAccess(request, {
-      entityRef: body.entityRef,
-      environment: optionalBodyString(body.environment, 'environment'),
-      path: body.secretPath,
-    });
+    const { access, api, context } = await entityScoped(
+      request,
+      bodyInput(body),
+      infisicalSecretUpdatePermission,
+    );
 
-    await authorize(infisicalSecretUpdatePermission, entityRef, credentials);
-
-    const { api, context } = clientFor(access, entityRef, credentials);
     const secret = await api.updateSecret(
-      {
-        secretKey: body.secretKey,
-        secretValue: body.secretValue,
-        secretComment: body.secretComment,
-        type: body.type,
-        workspaceId: access.workspaceId,
-        secretPath: access.path,
-        environment: access.environment,
-      },
-      secretId,
+      secretPayload(body, access),
+      request.params.secretId,
       context,
     );
     response.json(secret);
@@ -414,31 +394,20 @@ export async function createRouter(
    * Requires `infisical.secret.delete`.
    */
   router.delete('/secrets/:secretId', async (request, response) => {
-    const { secretId } = request.params;
     const body = (request.body ?? {}) as InfisicalSecretDeleteHttpRequest;
 
-    if (!secretId) {
-      throw new InputError('Secret ID is required');
-    }
+    const { access, api, context } = await entityScoped(
+      request,
+      bodyInput(body),
+      infisicalSecretDeletePermission,
+      { requireEnvironment: true },
+    );
 
-    const { entityRef, credentials, access } = await resolveAccess(request, {
-      entityRef: body.entityRef,
-      environment: optionalBodyString(body.environment, 'environment'),
-      path: body.secretPath,
-    });
-
-    if (!access.environment) {
-      throw new InputError('environment is required');
-    }
-
-    await authorize(infisicalSecretDeletePermission, entityRef, credentials);
-
-    const { api, context } = clientFor(access, entityRef, credentials);
     await api.deleteSecret(
-      secretId,
+      request.params.secretId,
       {
         workspaceId: access.workspaceId,
-        environment: access.environment,
+        environment: access.environment!,
         secretPath: access.path,
       },
       context,

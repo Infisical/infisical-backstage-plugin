@@ -6,3 +6,4 @@
 
 export * from './annotations';
 export * from './permissions';
+export * from './secretPath';

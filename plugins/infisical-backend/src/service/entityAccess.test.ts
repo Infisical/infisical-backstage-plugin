@@ -1,37 +1,14 @@
 import { mockCredentials } from '@backstage/backend-test-utils';
 import { InputError, NotAllowedError, NotFoundError } from '@backstage/errors';
 import { CatalogService } from '@backstage/plugin-catalog-node';
+import { normalizeSecretPath } from '@infisical/backstage-plugin-infisical-common';
 import {
-  normalizeSecretPath,
   resolveEntityAccess,
   resolveEnvironment,
   resolveIdentityName,
   resolveSecretPath,
   validateEntityRef,
 } from './entityAccess';
-
-describe('normalizeSecretPath', () => {
-  it.each([
-    [undefined, '/'],
-    ['', '/'],
-    ['/', '/'],
-    ['foo', '/foo'],
-    ['/foo', '/foo'],
-    ['/foo/', '/foo'],
-    ['//foo', '/foo'],
-    ['/foo//bar/', '/foo/bar'],
-    ['  /foo ', '/foo'],
-  ])('normalizes %p to %p', (input, expected) => {
-    expect(normalizeSecretPath(input)).toBe(expected);
-  });
-
-  it.each(['/foo/../bar', '..', '/./foo', '/foo\\bar'])(
-    'rejects traversal attempt %p',
-    input => {
-      expect(() => normalizeSecretPath(input)).toThrow(InputError);
-    },
-  );
-});
 
 describe('resolveSecretPath', () => {
   describe('without annotation', () => {

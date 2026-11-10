@@ -1,6 +1,7 @@
 import { createBackend } from '@backstage/backend-defaults';
 import { mockServices } from '@backstage/backend-test-utils';
 import { catalogServiceMock } from '@backstage/plugin-catalog-node/testUtils';
+import { INFISICAL_PROJECT_ANNOTATION } from '@infisical/backstage-plugin-infisical-common';
 import { default as infisicalPlugin } from '../src';
 
 // Create the backend instance
@@ -21,7 +22,7 @@ backend.add(
           name: 'sample',
           title: 'Sample Component',
           annotations: {
-            'infisical/projectId': 'replace-with-your-project-id',
+            [INFISICAL_PROJECT_ANNOTATION]: 'replace-with-your-project-id',
           },
         },
         spec: {

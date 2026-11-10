@@ -2,6 +2,7 @@ import { LoggerService } from '@backstage/backend-plugin-api';
 import { parseEntityRef, stringifyEntityRef } from '@backstage/catalog-model';
 import { Config } from '@backstage/config';
 import { NotAllowedError, NotFoundError } from '@backstage/errors';
+import { INFISICAL_IDENTITY_ANNOTATION } from '@infisical/backstage-plugin-infisical-common';
 import { InfisicalApiClient } from './InfisicalApi';
 
 /**
@@ -59,10 +60,9 @@ export class InfisicalIdentityRegistry {
         );
       }
       const allowed = identityConfig.getOptionalStringArray('allowedEntityRefs');
-
-      let allowedEntityRefs: Set<string> | undefined;
-      if (allowed) {
-        allowedEntityRefs = new Set(
+      const allowedEntityRefs =
+        allowed &&
+        new Set(
           allowed.map(ref => {
             try {
               return normalizeEntityRef(ref);
@@ -73,7 +73,6 @@ export class InfisicalIdentityRegistry {
             }
           }),
         );
-      }
 
       this.identities.set(name, {
         client: new InfisicalApiClient({
@@ -118,7 +117,7 @@ export class InfisicalIdentityRegistry {
     if (identityName === undefined) {
       if (!this.defaultClient) {
         throw new NotFoundError(
-          `No Infisical identity is configured for entity '${entityRef}'. Set the infisical/identity annotation or configure infisical.authentication`,
+          `No Infisical identity is configured for entity '${entityRef}'. Set the ${INFISICAL_IDENTITY_ANNOTATION} annotation or configure infisical.authentication`,
         );
       }
       return this.defaultClient;

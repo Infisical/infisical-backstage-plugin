@@ -4,7 +4,8 @@
 
 import React, { useEffect, useState } from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
-import { EntitySecretsProvider, INFISICAL_PROJECT_ANNOTATION } from './EntitySecretsProvider';
+import { INFISICAL_PROJECT_ANNOTATION } from '@infisical/backstage-plugin-infisical-common';
+import { EntitySecretsProvider } from './EntitySecretsProvider';
 import { Entity } from '@backstage/catalog-model';
 
 // Mock the InfoCard and EmptyState components

@@ -13,12 +13,6 @@ import {
     INFISICAL_SECRET_PATH_ANNOTATION,
 } from '@infisical/backstage-plugin-infisical-common';
 
-export {
-    INFISICAL_PROJECT_ANNOTATION,
-    INFISICAL_ENVIRONMENT_ANNOTATION,
-    INFISICAL_SECRET_PATH_ANNOTATION,
-};
-
 /**
  * Props for EntitySecretsProvider
  */
