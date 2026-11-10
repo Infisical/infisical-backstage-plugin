@@ -227,6 +227,34 @@ describe('InfisicalApiClient', () => {
       expect(fetchMock).toHaveBeenCalledTimes(2);
     });
 
+    it('retries a read when the connection drops while reading the body', async () => {
+      fetchMock
+        .mockResolvedValueOnce({
+          ...jsonResponse({}),
+          json: () => Promise.reject(new TypeError('terminated')),
+        })
+        .mockResolvedValueOnce(
+          jsonResponse({ workspace: { id: 'w', environments: [] } }),
+        );
+
+      await expect(
+        apiClient.getEnvironments('workspace123'),
+      ).resolves.toMatchObject({ id: 'w' });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not retry a write when reading the body fails', async () => {
+      fetchMock.mockResolvedValue({
+        ...jsonResponse({}),
+        json: () => Promise.reject(new TypeError('terminated')),
+      });
+
+      await expect(apiClient.createSecret(secretData)).rejects.toThrow(
+        'terminated',
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
     it('does not retry a write on a network error', async () => {
       fetchMock.mockRejectedValue(new TypeError('fetch failed'));
 

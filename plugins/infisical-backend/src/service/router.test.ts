@@ -694,9 +694,39 @@ describe('infisical router', () => {
             permission: infisicalSecretUpdatePermission,
             resourceRef: ENTITY_REF,
           },
+          {
+            permission: infisicalSecretValueReadPermission,
+            resourceRef: ENTITY_REF,
+          },
         ],
         { credentials: mockCredentials.user() },
       );
+    });
+
+    it('redacts the value from the response when value.read is denied', async () => {
+      allowOnly(infisicalSecretUpdatePermission.name);
+      mockInfisicalApi.updateSecret.mockResolvedValue({
+        id: 'secret1',
+        key: 'API_KEY',
+        value: 'stored-value',
+        secretKey: 'API_KEY',
+        secretValue: 'stored-value',
+      });
+      const { secretValue: _omitted, ...withoutValue } = secretData;
+
+      const response = await request(app)
+        .patch('/secrets/secret1')
+        .send({ ...withoutValue, secretComment: 'new' });
+
+      expect(response.status).toBe(200);
+      expect(mockInfisicalApi.updateSecret).toHaveBeenCalled();
+      expect(response.body).toEqual({
+        id: 'secret1',
+        key: 'API_KEY',
+        value: '',
+        secretKey: 'API_KEY',
+        secretValue: '',
+      });
     });
 
     it('returns 403 when update is denied', async () => {

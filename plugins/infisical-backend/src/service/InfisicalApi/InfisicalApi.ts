@@ -519,9 +519,29 @@ export class InfisicalApiClient {
       return undefined as T;
     }
 
-    const data = (await response.json()) as T;
-    this.logger.debug(`Successfully parsed response from ${url}`);
-    return data;
+    try {
+      const data = (await response.json()) as T;
+      this.logger.debug(`Successfully parsed response from ${url}`);
+      return data;
+    } catch (error) {
+      // fetch resolves once the headers arrive, so the connection can still
+      // drop while the body is read. Only reads are retried: a write has
+      // already been applied.
+      if (canRetry && method.toUpperCase() === 'GET') {
+        this.logger.warn(
+          `Error reading Infisical API response, retrying (attempt ${
+            retryCount + 1
+          }/${this.maxRetries}): ${error}`,
+        );
+        await this.backoff(retryCount);
+        return this.makeRequest<T>(options, retryCount + 1, tokenRefreshed);
+      }
+
+      this.logger.error(
+        `Error reading Infisical API response from ${url}: ${error}`,
+      );
+      throw error;
+    }
   }
 
   /**

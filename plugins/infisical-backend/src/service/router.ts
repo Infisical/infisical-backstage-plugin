@@ -64,17 +64,19 @@ interface EntityScopedInput {
   path?: string;
 }
 
+function redactValue(secret: InfisicalSecret): InfisicalSecret {
+  const redacted: InfisicalSecret & { secretValue?: string } = {
+    ...secret,
+    value: REDACTED_VALUE,
+  };
+  if ('secretValue' in redacted) {
+    redacted.secretValue = REDACTED_VALUE;
+  }
+  return redacted;
+}
+
 function redactValues(secrets: InfisicalSecret[]): InfisicalSecret[] {
-  return secrets.map(secret => {
-    const redacted: InfisicalSecret & { secretValue?: string } = {
-      ...secret,
-      value: REDACTED_VALUE,
-    };
-    if ('secretValue' in redacted) {
-      redacted.secretValue = REDACTED_VALUE;
-    }
-    return redacted;
-  });
+  return secrets.map(redactValue);
 }
 
 function queryString(value: unknown): string | undefined {
@@ -371,7 +373,8 @@ export async function createRouter(
    * read values can still rename a secret or change its comment. When it is
    * present it must be a non-empty string.
    *
-   * Requires `infisical.secret.update`.
+   * Requires `infisical.secret.update`. The value is only included in the
+   * response when `infisical.secret.value.read` is also allowed.
    */
   router.patch('/secrets/:secretId', async (request, response) => {
     const body = (request.body ?? {}) as InfisicalSecretUpdateHttpRequest;
@@ -388,10 +391,16 @@ export async function createRouter(
       );
     }
 
-    const { access, api, context } = await entityScoped(
+    const {
+      access,
+      api,
+      context,
+      optionalAllowed: [canReadValues],
+    } = await entityScoped(
       request,
       bodyInput(body),
       infisicalSecretUpdatePermission,
+      { optional: [infisicalSecretValueReadPermission] },
     );
 
     const secret = await api.updateSecret(
@@ -399,7 +408,9 @@ export async function createRouter(
       request.params.secretId,
       context,
     );
-    response.json(secret);
+    // Infisical returns the stored value, which an update without
+    // `secretValue` would otherwise reveal
+    response.json(canReadValues ? secret : redactValue(secret));
   });
 
   /**
