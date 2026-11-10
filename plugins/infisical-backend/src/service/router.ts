@@ -1,4 +1,3 @@
-import { MiddlewareFactory } from '@backstage/backend-defaults/rootHttpRouter';
 import {
   BackstageCredentials,
   HttpAuthService,
@@ -78,6 +77,20 @@ function queryString(value: unknown): string | undefined {
 }
 
 /**
+ * Reads an optional string field from a JSON body. Other types are rejected
+ * so they never reach the access checks or Infisical.
+ */
+function optionalBodyString(value: unknown, name: string): string | undefined {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+  if (typeof value !== 'string') {
+    throw new InputError(`${name} must be a string`);
+  }
+  return value;
+}
+
+/**
  * Creates a router for the Infisical backend plugin.
  *
  * Every route is scoped to a catalog entity (`entityRef`). The Infisical
@@ -100,16 +113,28 @@ export async function createRouter(
 
   const identities = new InfisicalIdentityRegistry({ config, logger });
 
+  /**
+   * Evaluates several permissions against the entity in a single
+   * permission-backend round trip.
+   */
   async function isAllowed(
-    permission: ResourcePermission,
+    requested: ResourcePermission[],
     entityRef: string,
     credentials: BackstageCredentials,
-  ): Promise<boolean> {
-    const [decision] = await permissions.authorize(
-      [{ permission, resourceRef: entityRef }],
+  ): Promise<boolean[]> {
+    const decisions = await permissions.authorize(
+      requested.map(permission => ({ permission, resourceRef: entityRef })),
       { credentials },
     );
-    return decision?.result === AuthorizeResult.ALLOW;
+    return requested.map(
+      (_, index) => decisions[index]?.result === AuthorizeResult.ALLOW,
+    );
+  }
+
+  function notAllowed(permission: ResourcePermission, entityRef: string) {
+    return new NotAllowedError(
+      `Not allowed to perform '${permission.name}' on '${entityRef}'`,
+    );
   }
 
   async function authorize(
@@ -117,10 +142,9 @@ export async function createRouter(
     entityRef: string,
     credentials: BackstageCredentials,
   ): Promise<void> {
-    if (!(await isAllowed(permission, entityRef, credentials))) {
-      throw new NotAllowedError(
-        `Not allowed to perform '${permission.name}' on '${entityRef}'`,
-      );
+    const [allowed] = await isAllowed([permission], entityRef, credentials);
+    if (!allowed) {
+      throw notAllowed(permission, entityRef);
     }
   }
 
@@ -195,12 +219,14 @@ export async function createRouter(
       path: queryString(request.query.path),
     });
 
-    await authorize(infisicalSecretReadPermission, entityRef, credentials);
-    const canReadValues = await isAllowed(
-      infisicalSecretValueReadPermission,
+    const [canRead, canReadValues] = await isAllowed(
+      [infisicalSecretReadPermission, infisicalSecretValueReadPermission],
       entityRef,
       credentials,
     );
+    if (!canRead) {
+      throw notAllowed(infisicalSecretReadPermission, entityRef);
+    }
 
     const { api, context } = clientFor(access, entityRef, credentials);
     const result = await api.getSecrets(
@@ -305,7 +331,7 @@ export async function createRouter(
 
     const { entityRef, credentials, access } = await resolveAccess(request, {
       entityRef: body.entityRef,
-      environment: body.environment,
+      environment: optionalBodyString(body.environment, 'environment'),
       path: body.secretPath,
     });
 
@@ -351,7 +377,7 @@ export async function createRouter(
 
     const { entityRef, credentials, access } = await resolveAccess(request, {
       entityRef: body.entityRef,
-      environment: body.environment,
+      environment: optionalBodyString(body.environment, 'environment'),
       path: body.secretPath,
     });
 
@@ -397,7 +423,7 @@ export async function createRouter(
 
     const { entityRef, credentials, access } = await resolveAccess(request, {
       entityRef: body.entityRef,
-      environment: body.environment,
+      environment: optionalBodyString(body.environment, 'environment'),
       path: body.secretPath,
     });
 
@@ -419,9 +445,6 @@ export async function createRouter(
     );
     response.status(204).send();
   });
-
-  const middleware = MiddlewareFactory.create({ config, logger });
-  router.use(middleware.error());
 
   return router;
 }

@@ -18,6 +18,25 @@ import {
 } from '../types';
 
 /**
+ * Encodes a value for use as a single URL path segment.
+ *
+ * `encodeURIComponent` leaves dots alone and `new URL()` resolves `.` and `..`
+ * segments, so those are rejected instead of being allowed to change the
+ * endpoint that is called.
+ */
+function pathSegment(value: string): string {
+  if (
+    typeof value !== 'string' ||
+    value === '' ||
+    value === '.' ||
+    value === '..'
+  ) {
+    throw new InputError(`Invalid path segment '${value}'`);
+  }
+  return encodeURIComponent(value);
+}
+
+/**
  * Authentication credentials for Infisical API
  * @internal
  */
@@ -541,32 +560,31 @@ export class InfisicalApiClient {
     );
 
     try {
-      // Get secrets
-      const secretsResponse = await this.makeRequest<InfisicalSecretsResponse>({
-        method: 'GET',
-        path: '/v3/secrets/raw',
-        queryParams: {
-          workspaceId,
-          environment,
-          include_imports: 'true',
-          secretPath: path,
-          viewSecretValue: 'false',
-        },
-        context,
-      });
-
-      // Get folders
-      const foldersResponse = await this.makeRequest<InfisicalFoldersResponse>({
-        method: 'GET',
-        path: '/v1/folders',
-        queryParams: {
-          workspaceId,
-          environment,
-          include_imports: 'true',
-          path,
-        },
-        context,
-      });
+      const [secretsResponse, foldersResponse] = await Promise.all([
+        this.makeRequest<InfisicalSecretsResponse>({
+          method: 'GET',
+          path: '/v3/secrets/raw',
+          queryParams: {
+            workspaceId,
+            environment,
+            include_imports: 'true',
+            secretPath: path,
+            viewSecretValue: 'false',
+          },
+          context,
+        }),
+        this.makeRequest<InfisicalFoldersResponse>({
+          method: 'GET',
+          path: '/v1/folders',
+          queryParams: {
+            workspaceId,
+            environment,
+            include_imports: 'true',
+            path,
+          },
+          context,
+        }),
+      ]);
 
       // Process and combine secrets and imported secrets
       const secrets = secretsResponse?.secrets || [];
@@ -616,7 +634,7 @@ export class InfisicalApiClient {
 
     const response = await this.makeRequest<InfisicalSecretResponse>({
       method: 'GET',
-      path: `/v3/secrets/raw/${secretId}`,
+      path: `/v3/secrets/raw/${pathSegment(secretId)}`,
       queryParams: {
         workspaceId,
         environment: options?.environment,
@@ -648,7 +666,7 @@ export class InfisicalApiClient {
     try {
       const response = await this.makeRequest<InfisicalSecretResponse>({
         method: 'POST',
-        path: `/v3/secrets/raw/${secretData.secretKey}`,
+        path: `/v3/secrets/raw/${pathSegment(secretData.secretKey)}`,
         body: secretData,
         context,
       });
@@ -682,7 +700,7 @@ export class InfisicalApiClient {
     try {
       const response = await this.makeRequest<InfisicalSecretResponse>({
         method: 'PATCH',
-        path: `/v3/secrets/raw/${secretId}`,
+        path: `/v3/secrets/raw/${pathSegment(secretId)}`,
         body: {
           ...secretData,
           newSecretName: secretData.secretKey !== secretId ? secretData.secretKey : undefined,
@@ -718,7 +736,7 @@ export class InfisicalApiClient {
     try {
       await this.makeRequest<void>({
         method: 'DELETE',
-        path: `/v3/secrets/raw/${secretId}`,
+        path: `/v3/secrets/raw/${pathSegment(secretId)}`,
         body: secretData,
         context,
       });
@@ -751,7 +769,7 @@ export class InfisicalApiClient {
         workspace: InfisicalProject;
       }>({
         method: 'GET',
-        path: `/v1/workspace/${workspaceId}`,
+        path: `/v1/workspace/${pathSegment(workspaceId)}`,
         context,
       });
 

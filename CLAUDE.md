@@ -74,7 +74,7 @@ Defined in `plugins/infisical-common/src/permissions.ts`. All five use the `cata
 
 ## Testing notes
 
-- Backend tests use `@backstage/backend-test-utils` (`mockServices`, `mockCredentials`) and `supertest`. `router.test.ts` mocks `./InfisicalApi` so the constructor returns a per-identity mock keyed by `identityName`, mocks the catalog with a bare `getEntityByRef` jest fn, and toggles decisions with `allowOnly(...)` / `allowAll()` helpers.
+- Backend tests use `@backstage/backend-test-utils` (`mockServices`, `mockCredentials`) and `supertest`. `router.test.ts` mocks `./InfisicalApi` so the constructor returns a per-identity mock keyed by `identityName`, mocks the catalog with a bare `getEntityByRef` jest fn, and toggles decisions with `allowOnly(...)` / `allowAll()` helpers. The router has no error middleware of its own (the root HTTP router handles errors), so tests mount `mockErrorHandler()` after it. A router created after the first test must re-apply `mockClientFor` to the `InfisicalApiClient` mock, because `setupTests.ts` resets mock implementations.
 - `plugins/infisical-backend/src/setupTests.ts` calls `jest.resetAllMocks()` after every test (wiping `mockImplementation`/`mockResolvedValue`) and freezes `Date.now` at `2023-01-01T12:00:00Z`. Set stubs in `beforeEach`, not at module scope.
 - The backend uses `msw` v2 and the frontend uses `msw` v1; their APIs differ.
 - Frontend tests use `@testing-library/react` 12 (the plugin's React peer range is 16/17). `src/mockInfisicalApi.ts` (`createMockInfisicalApi`) and `src/mocks.ts` provide an in-memory API and fixtures.

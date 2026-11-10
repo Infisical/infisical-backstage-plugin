@@ -236,6 +236,7 @@ The backend also enforces the entity annotations server-side, independently of t
 - When `infisical/secretPath` is set without the `+` prefix, only that exact path is accessible. With the `+` prefix, that path and its subfolders are accessible. Path traversal attempts are rejected with `400`.
 - Requests for an entity that does not exist or has no `infisical/projectId` annotation return `404`.
 - Requests for an entity whose `infisical/identity` annotations name an identity that is not configured return `404`; identities with `allowedEntityRefs` reject other entities with `403`. These checks run after the permission check.
+- Secret keys and project IDs are sent to Infisical as a single encoded URL path segment. A secret key of `.` or `..`, or an `environment` in a request body that is not a string, is rejected with `400`.
 
 Make sure the permission framework is enabled in `app-config.yaml`:
 

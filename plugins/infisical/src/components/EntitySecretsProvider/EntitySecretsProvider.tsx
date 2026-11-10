@@ -70,5 +70,12 @@ export const EntitySecretsProvider: React.FC<EntitySecretsProviderProps> = ({
         );
     }
 
-    return <>{children(entityRef, environment, secretPath)}</>;
+    // Keyed by entity so navigating to another entity remounts the content
+    // instead of carrying over state such as a permission-denied result or
+    // the previously selected environment.
+    return (
+        <React.Fragment key={entityRef}>
+            {children(entityRef, environment, secretPath)}
+        </React.Fragment>
+    );
 };

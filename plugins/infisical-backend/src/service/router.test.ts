@@ -2,7 +2,11 @@ import express from 'express';
 import request from 'supertest';
 import { createRouter } from './router';
 import { ConfigReader } from '@backstage/config';
-import { mockCredentials, mockServices } from '@backstage/backend-test-utils';
+import {
+  mockCredentials,
+  mockErrorHandler,
+  mockServices,
+} from '@backstage/backend-test-utils';
 import { AuthorizeResult } from '@backstage/plugin-permission-common';
 import { CatalogService } from '@backstage/plugin-catalog-node';
 import { Entity } from '@backstage/catalog-model';
@@ -15,6 +19,7 @@ import {
   infisicalSecretValueReadPermission,
 } from '@infisical/backstage-plugin-infisical-common';
 import { InfisicalSecret, InfisicalProject } from './types';
+import { InfisicalApiClient } from './InfisicalApi';
 
 function mockApi() {
   return {
@@ -37,13 +42,14 @@ const mockIdentityApis: Record<string, ReturnType<typeof mockApi>> = {
   restricted: mockApi(),
 };
 
+/** Returns the mock client of the identity an InfisicalApiClient is built for */
+function mockClientFor({ identityName }: { identityName?: string }) {
+  return identityName ? mockIdentityApis[identityName] : mockInfisicalApi;
+}
+
 jest.mock('./InfisicalApi', () => {
   return {
-    InfisicalApiClient: jest
-      .fn()
-      .mockImplementation(({ identityName }: { identityName?: string }) =>
-        identityName ? mockIdentityApis[identityName] : mockInfisicalApi,
-      ),
+    InfisicalApiClient: jest.fn().mockImplementation(mockClientFor),
   };
 });
 
@@ -138,7 +144,7 @@ describe('infisical router', () => {
       catalog: { getEntityByRef } as unknown as CatalogService,
     });
 
-    app = express().use(router);
+    app = express().use(router).use(mockErrorHandler());
   });
 
   beforeEach(() => {
@@ -219,13 +225,18 @@ describe('infisical router', () => {
       );
     });
 
-    it('authorizes read against the entity with the caller credentials', async () => {
+    it('authorizes read and value.read against the entity in one call', async () => {
       await request(app).get(`/secrets?entityRef=${ENTITY_REF}`);
 
+      expect(permissions.authorize).toHaveBeenCalledTimes(1);
       expect(permissions.authorize).toHaveBeenCalledWith(
         [
           {
             permission: infisicalSecretReadPermission,
+            resourceRef: ENTITY_REF,
+          },
+          {
+            permission: infisicalSecretValueReadPermission,
             resourceRef: ENTITY_REF,
           },
         ],
@@ -590,6 +601,22 @@ describe('infisical router', () => {
       expect(response.status).toBe(400);
       expect(response.body.error.message).toContain('entityRef is required');
     });
+
+    it.each([{ slug: 'dev' }, ['dev'], 42])(
+      'returns 400 when environment is %j instead of a string',
+      async environment => {
+        const response = await request(app)
+          .post('/secrets')
+          .send({ ...secretData, environment });
+
+        expect(response.status).toBe(400);
+        expect(response.body.error.message).toContain(
+          'environment must be a string',
+        );
+        expect(getEntityByRef).not.toHaveBeenCalled();
+        expect(mockInfisicalApi.createSecret).not.toHaveBeenCalled();
+      },
+    );
 
     it('handles conflict errors from the API', async () => {
       mockInfisicalApi.createSecret.mockRejectedValueOnce(
@@ -1001,6 +1028,52 @@ describe('infisical router', () => {
           entityRef: ENTITY_REF,
         },
       );
+    });
+  });
+
+  describe('without a default identity', () => {
+    let appWithoutDefault: express.Express;
+
+    beforeAll(async () => {
+      // setupTests resets mock implementations after every test
+      jest.mocked(InfisicalApiClient).mockImplementation(mockClientFor as any);
+
+      const router = await createRouter({
+        logger: mockServices.rootLogger(),
+        config: new ConfigReader({
+          infisical: {
+            identities: {
+              'payments-dev': universalAuth,
+              'payments-prod': universalAuth,
+            },
+          },
+        }),
+        httpAuth: mockServices.httpAuth(),
+        permissions,
+        catalog: { getEntityByRef } as unknown as CatalogService,
+      });
+      appWithoutDefault = express().use(router).use(mockErrorHandler());
+    });
+
+    it('fails to list environments with only per-environment identities', async () => {
+      getEntityByRef.mockResolvedValue(
+        entityWith({
+          'infisical/identity.dev': 'payments-dev',
+          'infisical/identity.prod': 'payments-prod',
+        }),
+      );
+
+      const response = await request(appWithoutDefault).get(
+        `/environments?entityRef=${ENTITY_REF}`,
+      );
+
+      expect(response.status).toBe(404);
+      expect(response.body.error.message).toContain(
+        'Set the infisical/identity annotation or configure infisical.authentication',
+      );
+      for (const api of Object.values(mockIdentityApis)) {
+        expect(api.getEnvironments).not.toHaveBeenCalled();
+      }
     });
   });
 });

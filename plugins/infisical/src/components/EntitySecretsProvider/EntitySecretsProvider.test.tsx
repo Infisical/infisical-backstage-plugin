@@ -2,8 +2,8 @@
  * Tests for EntitySecretsProvider component
  */
 
-import React from 'react';
-import { render, screen } from '@testing-library/react';
+import React, { useEffect, useState } from 'react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { EntitySecretsProvider, INFISICAL_PROJECT_ANNOTATION } from './EntitySecretsProvider';
 import { Entity } from '@backstage/catalog-model';
 
@@ -106,5 +106,70 @@ describe('EntitySecretsProvider', () => {
 
         // The mock child component should not have been called
         expect(mockChildComponent).not.toHaveBeenCalled();
+    });
+
+    describe('when the entity changes', () => {
+        const entityNamed = (name: string): Entity => ({
+            apiVersion: 'backstage.io/v1alpha1',
+            kind: 'Component',
+            metadata: {
+                name,
+                annotations: { [INFISICAL_PROJECT_ANNOTATION]: 'test-project-id' },
+            },
+            spec: {},
+        });
+
+        const mounts: string[] = [];
+
+        /** Stands in for the secrets content: counts mounts and holds local state */
+        const StatefulChild = ({ entityRef }: { entityRef: string }) => {
+            const [denied, setDenied] = useState(false);
+            useEffect(() => {
+                mounts.push(entityRef);
+            }, []); // eslint-disable-line react-hooks/exhaustive-deps
+            return (
+                <button onClick={() => setDenied(true)}>
+                    {entityRef}: {denied ? 'denied' : 'allowed'}
+                </button>
+            );
+        };
+
+        const tree = () => (
+            <EntitySecretsProvider>
+                {entityRef => <StatefulChild entityRef={entityRef} />}
+            </EntitySecretsProvider>
+        );
+
+        beforeEach(() => {
+            mounts.length = 0;
+        });
+
+        it('remounts the content so state from the previous entity is dropped', () => {
+            const useEntityMock = require('@backstage/plugin-catalog-react').useEntity;
+            useEntityMock.mockReturnValue({ entity: entityNamed('a') });
+            const { rerender } = render(tree());
+
+            fireEvent.click(screen.getByRole('button'));
+            expect(screen.getByText('component:default/a: denied')).toBeInTheDocument();
+
+            useEntityMock.mockReturnValue({ entity: entityNamed('b') });
+            rerender(tree());
+
+            expect(screen.getByText('component:default/b: allowed')).toBeInTheDocument();
+            expect(mounts).toEqual(['component:default/a', 'component:default/b']);
+        });
+
+        it('keeps the content mounted while the entity stays the same', () => {
+            const useEntityMock = require('@backstage/plugin-catalog-react').useEntity;
+            useEntityMock.mockReturnValue({ entity: entityNamed('a') });
+            const { rerender } = render(tree());
+
+            fireEvent.click(screen.getByRole('button'));
+            useEntityMock.mockReturnValue({ entity: entityNamed('a') });
+            rerender(tree());
+
+            expect(screen.getByText('component:default/a: denied')).toBeInTheDocument();
+            expect(mounts).toEqual(['component:default/a']);
+        });
     });
 });
