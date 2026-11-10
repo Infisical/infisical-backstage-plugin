@@ -16,7 +16,7 @@ describe('InfisicalClient', () => {
     fetch: jest.fn(),
   };
 
-  const mockWorkspaceId = 'test-workspace-id';
+  const mockEntityRef = 'component:default/test-component';
 
   let client: InfisicalClient;
 
@@ -68,17 +68,17 @@ describe('InfisicalClient', () => {
         json: async () => mockResponse,
       });
 
-      const result = await client.getEnvironments(mockWorkspaceId);
+      const result = await client.getEnvironments(mockEntityRef);
 
       expect(mockFetchApi.fetch).toHaveBeenCalledWith(
-        `${mockBaseUrl}/environments?workspaceId=${mockWorkspaceId}`,
+        `${mockBaseUrl}/environments?entityRef=${encodeURIComponent(mockEntityRef)}`,
       );
       expect(result).toEqual(mockResponse);
     });
 
-    it('should throw an error if no workspace ID is provided', async () => {
+    it('should throw an error if no entity reference is provided', async () => {
       await expect(client.getEnvironments('')).rejects.toThrow(
-        'No workspace ID provided',
+        'No entity reference provided',
       );
       expect(mockFetchApi.fetch).not.toHaveBeenCalled();
     });
@@ -95,7 +95,7 @@ describe('InfisicalClient', () => {
         json: async () => mockResponse,
       });
 
-      const result = await client.getSecrets(mockWorkspaceId, {
+      const result = await client.getSecrets(mockEntityRef, {
         path: '/test-path',
         environment: 'development',
       });
@@ -104,7 +104,7 @@ describe('InfisicalClient', () => {
         expect.stringContaining(`${mockBaseUrl}/secrets?`),
       );
       expect(mockFetchApi.fetch.mock.calls[0][0]).toContain(
-        'workspaceId=test-workspace-id',
+        `entityRef=${encodeURIComponent(mockEntityRef)}`,
       );
       expect(mockFetchApi.fetch.mock.calls[0][0]).toContain(
         'path=%2Ftest-path',
@@ -115,9 +115,9 @@ describe('InfisicalClient', () => {
       expect(result).toEqual(mockResponse);
     });
 
-    it('should throw an error if no workspace ID is provided', async () => {
+    it('should throw an error if no entity reference is provided', async () => {
       await expect(client.getSecrets('')).rejects.toThrow(
-        'No workspace ID provided',
+        'No entity reference provided',
       );
       expect(mockFetchApi.fetch).not.toHaveBeenCalled();
     });
@@ -150,7 +150,7 @@ describe('InfisicalClient', () => {
         json: async () => mockResponse,
       });
 
-      const result = await client.createSecret(mockWorkspaceId, secretData, {
+      const result = await client.createSecret(mockEntityRef, secretData, {
         path: '/test-path',
         environment: 'development',
       });
@@ -170,7 +170,7 @@ describe('InfisicalClient', () => {
       expect(requestBody).toEqual({
         ...secretData,
         secretPath: '/test-path',
-        workspaceId: mockWorkspaceId,
+        entityRef: mockEntityRef,
         environment: 'development',
       });
 
@@ -207,7 +207,7 @@ describe('InfisicalClient', () => {
       });
 
       const result = await client.updateSecret(
-        mockWorkspaceId,
+        mockEntityRef,
         secretId,
         secretData,
         {
@@ -231,7 +231,7 @@ describe('InfisicalClient', () => {
       expect(requestBody).toEqual({
         ...secretData,
         secretPath: '/test-path',
-        workspaceId: mockWorkspaceId,
+        entityRef: mockEntityRef,
         environment: 'development',
       });
 
@@ -247,7 +247,7 @@ describe('InfisicalClient', () => {
         ok: true,
       });
 
-      await client.deleteSecret(mockWorkspaceId, secretId, {
+      await client.deleteSecret(mockEntityRef, secretId, {
         path: '/test-path',
         environment: 'development',
       });
@@ -266,7 +266,7 @@ describe('InfisicalClient', () => {
       const requestBody = JSON.parse(mockFetchApi.fetch.mock.calls[0][1].body);
       expect(requestBody).toEqual({
         secretPath: '/test-path',
-        workspaceId: mockWorkspaceId,
+        entityRef: mockEntityRef,
         environment: 'development',
       });
     });

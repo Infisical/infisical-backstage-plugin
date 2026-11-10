@@ -2,6 +2,8 @@ import {
   createBackendPlugin,
   coreServices,
 } from '@backstage/backend-plugin-api';
+import { catalogServiceRef } from '@backstage/plugin-catalog-node';
+import { infisicalPermissions } from '@infisical/backstage-plugin-infisical-common';
 
 import { createRouter } from './service/router';
 
@@ -19,12 +21,29 @@ export const infisicalPlugin = createBackendPlugin({
         logger: coreServices.logger,
         http: coreServices.httpRouter,
         config: coreServices.rootConfig,
+        httpAuth: coreServices.httpAuth,
+        permissions: coreServices.permissions,
+        permissionsRegistry: coreServices.permissionsRegistry,
+        catalog: catalogServiceRef,
       },
-      async init({ http, logger, config }) {
+      async init({
+        http,
+        logger,
+        config,
+        httpAuth,
+        permissions,
+        permissionsRegistry,
+        catalog,
+      }) {
+        permissionsRegistry.addPermissions(infisicalPermissions);
+
         http.use(
           await createRouter({
             logger,
             config,
+            httpAuth,
+            permissions,
+            catalog,
           }),
         );
       },

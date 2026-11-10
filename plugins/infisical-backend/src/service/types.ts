@@ -91,6 +91,8 @@ export interface InfisicalSecretCreateRequest {
   type?: string;
   /** Optional comment about the secret */
   comment?: string;
+  /** Optional comment about the secret (field name used by the Infisical API) */
+  secretComment?: string;
   /** Path where the secret should be stored */
   secretPath?: string;
   /** Workspace ID where the secret belongs */
@@ -175,4 +177,51 @@ export interface InfisicalSecretDeleteRequest {
   environment: string;
   /** Path where the secret is stored */
   secretPath: string;
+}
+
+/**
+ * Fields shared by all entity-scoped HTTP requests.
+ * @public
+ */
+export interface InfisicalEntityScopedRequest {
+  /** Reference of the catalog entity the secrets are accessed through */
+  entityRef: string;
+}
+
+/**
+ * HTTP request body for creating a secret through the Backstage API.
+ * @public
+ */
+export interface InfisicalSecretCreateHttpRequest
+  extends InfisicalEntityScopedRequest {
+  /** Key/name of the secret */
+  secretKey: string;
+  /** Value of the secret */
+  secretValue: string;
+  /** Optional comment about the secret */
+  secretComment?: string;
+  /** Type of the secret (e.g., "shared", "personal") */
+  type?: string;
+  /** Path where the secret should be stored */
+  secretPath?: string;
+  /** Environment where the secret should be available */
+  environment?: string;
+}
+
+/**
+ * HTTP request body for updating a secret through the Backstage API.
+ * @public
+ */
+export type InfisicalSecretUpdateHttpRequest = InfisicalSecretCreateHttpRequest;
+
+/**
+ * HTTP request body for deleting a secret through the Backstage API.
+ * @public
+ */
+export interface InfisicalSecretDeleteHttpRequest
+  extends InfisicalEntityScopedRequest {
+  /** Environment where the secret is available */
+  environment?: string;
+  /** Path where the secret is stored */
+  secretPath?: string;
 }

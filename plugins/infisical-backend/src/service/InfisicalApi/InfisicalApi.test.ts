@@ -1,6 +1,6 @@
 import { ConfigReader } from '@backstage/config';
 import { mockServices } from '@backstage/backend-test-utils';
-import { InfisicalApiClient } from '../InfisicalApi';
+import { InfisicalApiClient, buildUserAgent } from '../InfisicalApi';
 import { NotFoundError } from '@backstage/errors';
 
 global.fetch = jest.fn();
@@ -365,6 +365,128 @@ describe('InfisicalApiClient', () => {
       await expect(
         apiClient.deleteSecret('secret1', secretData),
       ).resolves.not.toThrow();
+    });
+  });
+
+  describe('buildUserAgent', () => {
+    it('returns the product token without context', () => {
+      expect(buildUserAgent()).toBe('backstage-plugin-infisical');
+      expect(buildUserAgent({})).toBe('backstage-plugin-infisical');
+    });
+
+    it('includes the Backstage user and entity', () => {
+      expect(
+        buildUserAgent({
+          userRef: 'user:default/jane',
+          entityRef: 'component:default/api',
+        }),
+      ).toBe(
+        'backstage-plugin-infisical (user=user:default/jane; entity=component:default/api)',
+      );
+    });
+
+    it('drops characters that would break the header', () => {
+      expect(
+        buildUserAgent({ userRef: 'user:default/jáne\r\n(x); y' }),
+      ).toBe('backstage-plugin-infisical (user=user:default/jnex y)');
+    });
+  });
+
+  describe('identities and request context', () => {
+    const workspaceResponse = {
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          workspace: {
+            id: 'workspace-1',
+            name: 'Test Project',
+            slug: 'test-project',
+            environments: [],
+          },
+        }),
+      headers: { get: () => 'application/json' },
+    };
+
+    it('sends the Backstage user and entity in the User-Agent header', async () => {
+      apiClient = new InfisicalApiClient({ config: mockConfig, logger });
+      (global.fetch as jest.Mock).mockResolvedValueOnce(workspaceResponse);
+
+      await apiClient.getEnvironments('workspace-1', {
+        userRef: 'user:default/jane',
+        entityRef: 'component:default/api',
+      });
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://test-api.example.com/api/v1/workspace/workspace-1',
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: 'Bearer test-api-token',
+            'User-Agent':
+              'backstage-plugin-infisical (user=user:default/jane; entity=component:default/api)',
+          }),
+        }),
+      );
+    });
+
+    it('logs in with the credentials of the given identity', async () => {
+      // setupTests stubs Date.now, but resetAllMocks clears that stub between
+      // tests; pin it so the fresh token is not considered expired.
+      jest.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+
+      apiClient = new InfisicalApiClient({
+        config: mockConfig,
+        logger,
+        identityName: 'payments-dev',
+        authentication: new ConfigReader({
+          universalAuth: {
+            clientId: 'payments-dev-id',
+            clientSecret: 'payments-dev-secret',
+          },
+        }),
+      });
+
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({ accessToken: 'payments-dev-token', expiresIn: 3600 }),
+        })
+        .mockResolvedValueOnce(workspaceResponse);
+
+      await apiClient.getEnvironments('workspace-1');
+
+      const [loginUrl, loginInit] = (global.fetch as jest.Mock).mock.calls[0];
+      expect(loginUrl).toBe(
+        'https://test-api.example.com/api/v1/auth/universal-auth/login',
+      );
+      expect(JSON.parse(loginInit.body)).toEqual({
+        clientId: 'payments-dev-id',
+        clientSecret: 'payments-dev-secret',
+      });
+
+      const [, requestInit] = (global.fetch as jest.Mock).mock.calls[1];
+      expect(requestInit.headers.Authorization).toBe(
+        'Bearer payments-dev-token',
+      );
+      expect(requestInit.headers['User-Agent']).toBe(
+        'backstage-plugin-infisical',
+      );
+    });
+
+    it('names the identity when its credentials are missing', () => {
+      expect(
+        () =>
+          new InfisicalApiClient({
+            config: mockConfig,
+            logger,
+            identityName: 'broken',
+            authentication: new ConfigReader({}),
+          }),
+      ).toThrow(
+        "Missing Infisical Authentication credentials for identity 'broken'",
+      );
     });
   });
 });

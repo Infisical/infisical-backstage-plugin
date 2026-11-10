@@ -38,21 +38,21 @@ export function createMockInfisicalApi(): InfisicalApi {
     },
 
     getEnvironments: async (
-      workspaceId: string,
+      entityRef: string,
     ): Promise<GetEnvironmentsResponse> => {
-      if (!workspaceId) {
-        throw new Error('No workspace ID provided');
+      if (!entityRef) {
+        throw new Error('No entity reference provided');
       }
 
       return { environments };
     },
 
     getSecrets: async (
-      workspaceId: string,
+      entityRef: string,
       options?: { path?: string; environment?: string },
     ): Promise<GetSecretsResponse> => {
-      if (!workspaceId) {
-        throw new Error('No workspace ID provided');
+      if (!entityRef) {
+        throw new Error('No entity reference provided');
       }
 
       // Filter folders based on path
@@ -94,11 +94,11 @@ export function createMockInfisicalApi(): InfisicalApi {
     },
 
     createSecret: async (
-      workspaceId: string,
+      entityRef: string,
       secretData: InfisicalSecretFormValues
     ): Promise<InfisicalSecret> => {
-      if (!workspaceId) {
-        throw new Error('No workspace ID provided');
+      if (!entityRef) {
+        throw new Error('No entity reference provided');
       }
 
       const newSecret = createMockSecret(
@@ -117,12 +117,12 @@ export function createMockInfisicalApi(): InfisicalApi {
     },
 
     updateSecret: async (
-      workspaceId: string,
+      entityRef: string,
       secretId: string,
       secretData: InfisicalSecretFormValues
     ): Promise<InfisicalSecret> => {
-      if (!workspaceId) {
-        throw new Error('No workspace ID provided');
+      if (!entityRef) {
+        throw new Error('No entity reference provided');
       }
 
       // Find the secret to update
@@ -158,11 +158,11 @@ export function createMockInfisicalApi(): InfisicalApi {
     },
 
     deleteSecret: async (
-      workspaceId: string,
+      entityRef: string,
       secretId: string
     ): Promise<void> => {
-      if (!workspaceId) {
-        throw new Error('No workspace ID provided');
+      if (!entityRef) {
+        throw new Error('No entity reference provided');
       }
 
       // Remove the secret
@@ -173,11 +173,11 @@ export function createMockInfisicalApi(): InfisicalApi {
     },
 
     getSecretByKey: async (
-      workspaceId: string,
+      entityRef: string,
       secretKey: string
     ): Promise<InfisicalSecret> => {
-      if (!workspaceId) {
-        throw new Error('No workspace ID provided');
+      if (!entityRef) {
+        throw new Error('No entity reference provided');
       }
 
       // Find the secret by key

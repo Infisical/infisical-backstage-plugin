@@ -14,7 +14,9 @@
     "pluginId": "infisical-backend",
     "pluginPackage": "@infisical/backstage-backend-plugin-infisical",
     "pluginPackages": [
-      "@infisical/backstage-backend-plugin-infisical"
+      "@infisical/backstage-plugin-infisical",
+      "@infisical/backstage-backend-plugin-infisical",
+      "@infisical/backstage-plugin-infisical-common"
     ]
   },
   "scripts": {
@@ -30,9 +32,12 @@
     "@backstage/backend-defaults": "^0.8.2",
     "@backstage/backend-plugin-api": "^1.2.1",
     "@backstage/catalog-client": "^1.9.1",
+    "@backstage/catalog-model": "^1.7.3",
     "@backstage/config": "^1.3.2",
     "@backstage/errors": "^1.2.7",
     "@backstage/plugin-catalog-node": "^1.16.1",
+    "@backstage/plugin-permission-common": "^0.8.4",
+    "@infisical/backstage-plugin-infisical-common": "workspace:^",
     "express": "^4.17.1",
     "express-promise-router": "^4.1.0",
     "node-fetch": "^3.3.2",
@@ -50,6 +55,8 @@
     "supertest": "^6.2.4"
   },
   "files": [
-    "dist"
-  ]
+    "dist",
+    "config.d.ts"
+  ],
+  "configSchema": "config.d.ts"
 }

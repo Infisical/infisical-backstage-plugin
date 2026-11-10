@@ -45,6 +45,14 @@ import {
   InfoCard,
 } from '@backstage/core-components';
 import { useApi, alertApiRef, errorApiRef, ErrorApiError } from '@backstage/core-plugin-api';
+import { ResponseError } from '@backstage/errors';
+import { usePermission } from '@backstage/plugin-permission-react';
+import {
+  infisicalSecretCreatePermission,
+  infisicalSecretDeletePermission,
+  infisicalSecretUpdatePermission,
+  infisicalSecretValueReadPermission,
+} from '@infisical/backstage-plugin-infisical-common';
 import { infisicalApiRef } from '../../api/InfisicalClient/InfisicalClient';
 import { InfisicalSecret, InfisicalSecretFormValues, InfisicalFolder, InfisicalEnvironment } from '../../api/types';
 import { SecretDialog, DialogMode } from '../SecretDialog';
@@ -217,10 +225,23 @@ const useStyles = makeStyles(theme => ({
 }));
 
 export interface EntityInfisicalSecretsContentProps {
-  workspaceId: string;
+  /** Reference of the catalog entity the secrets are accessed through */
+  entityRef: string;
+  /** Environment the entity is locked to (from the `infisical/environment` annotation) */
   environment?: string;
+  /** Secret path restriction (from the `infisical/secretPath` annotation) */
   secretPath?: string;
 }
+
+/**
+ * Returns true when an error is a 403 response from the backend.
+ */
+const isForbidden = (err: unknown): boolean =>
+  err instanceof ResponseError && err.response.status === 403;
+
+const PERMISSION_DENIED_TITLE = "You don't have permission to view these secrets";
+const PERMISSION_DENIED_DESCRIPTION =
+  'Ask the owner of this entity or your Backstage administrator for access to Infisical secrets.';
 
 /**
  * Create a type for the combined data
@@ -235,13 +256,35 @@ type TableItem = (InfisicalSecret | InfisicalFolder) & {
 };
 
 /**
- * Component that displays and manages Infisical secrets for a specific workspace
+ * Component that displays and manages the Infisical secrets linked to an entity
  */
-export const EntityInfisicalSecretsContent = ({ workspaceId, environment, secretPath }: EntityInfisicalSecretsContentProps) => {
+export const EntityInfisicalSecretsContent = ({ entityRef, environment, secretPath }: EntityInfisicalSecretsContentProps) => {
   const classes = useStyles();
   const infisicalApi = useApi(infisicalApiRef);
   const alertApi = useApi(alertApiRef);
   const errorApi = useApi(errorApiRef);
+
+  // Permission checks are cosmetic only: the backend enforces them. While a
+  // check is still loading the corresponding control is hidden.
+  const { allowed: canCreate } = usePermission({
+    permission: infisicalSecretCreatePermission,
+    resourceRef: entityRef,
+  });
+  const { allowed: canUpdate } = usePermission({
+    permission: infisicalSecretUpdatePermission,
+    resourceRef: entityRef,
+  });
+  const { allowed: canDelete } = usePermission({
+    permission: infisicalSecretDeletePermission,
+    resourceRef: entityRef,
+  });
+  const { allowed: canReadValues } = usePermission({
+    permission: infisicalSecretValueReadPermission,
+    resourceRef: entityRef,
+  });
+
+  // Set when the backend denied listing environments or secrets
+  const [accessDenied, setAccessDenied] = useState(false);
 
   // State for environments
   const [environments, setEnvironments] = useState<InfisicalEnvironment[]>([]);
@@ -319,7 +362,7 @@ export const EntityInfisicalSecretsContent = ({ workspaceId, environment, secret
     const fetchEnvironments = async () => {
       try {
         setLoadingEnvironments(true);
-        const { environments: envs, name } = await infisicalApi.getEnvironments(workspaceId);
+        const { environments: envs, name } = await infisicalApi.getEnvironments(entityRef);
         setEnvironments(envs);
         setCardTitle(name || '');
 
@@ -336,37 +379,45 @@ export const EntityInfisicalSecretsContent = ({ workspaceId, environment, secret
 
         setLoadingEnvironments(false);
       } catch (err) {
-        errorApi.post(err as ErrorApiError);
+        if (isForbidden(err)) {
+          setAccessDenied(true);
+        } else {
+          errorApi.post(err as ErrorApiError);
+        }
         setLoadingEnvironments(false);
       }
     };
 
     fetchEnvironments();
-  }, [infisicalApi, workspaceId, environment, errorApi]);
+  }, [infisicalApi, entityRef, environment, errorApi]);
 
   // Fetch secrets from API
   const [{ value: { secrets, folders } = { secrets: [], folders: [] }, loading, error }, fetchSecrets] = useAsyncFn(async () => {
     if (!selectedEnvironment) return { secrets: [], folders: [] };
 
-    return await infisicalApi.getSecrets(workspaceId, {
+    return await infisicalApi.getSecrets(entityRef, {
       path: currentPath !== '/' ? currentPath : undefined,
       environment: selectedEnvironment,
       viewSecretValue: false
     });
-  }, [infisicalApi, workspaceId, currentPath, selectedEnvironment]);
+  }, [infisicalApi, entityRef, currentPath, selectedEnvironment]);
 
   // Load secrets when component mounts or currentPath or selectedEnvironment changes
   useEffect(() => {
     if (selectedEnvironment) {
       fetchSecrets().catch(err => {
-        errorApi.post(err as ErrorApiError);
+        if (isForbidden(err)) {
+          setAccessDenied(true);
+        } else {
+          errorApi.post(err as ErrorApiError);
+        }
       });
 
       setSecretValues({});
       setVisibleValues({});
       setLoadingSecretValues({});
     }
-  }, [fetchSecrets, errorApi, workspaceId, currentPath, selectedEnvironment]);
+  }, [fetchSecrets, errorApi, entityRef, currentPath, selectedEnvironment]);
 
   const handleOpenDialog = useCallback((mode: DialogMode, secret?: InfisicalSecret) => {
     setDialogMode(mode);
@@ -383,7 +434,7 @@ export const EntityInfisicalSecretsContent = ({ workspaceId, environment, secret
 
     try {
       if (dialogMode === 'create') {
-        await infisicalApi.createSecret(workspaceId, formValues, {
+        await infisicalApi.createSecret(entityRef, formValues, {
           path: currentPath !== '/' ? currentPath : undefined,
           environment: selectedEnvironment
         });
@@ -392,7 +443,7 @@ export const EntityInfisicalSecretsContent = ({ workspaceId, environment, secret
           severity: 'success',
         });
       } else if (dialogMode === 'edit' && selectedSecret) {
-        await infisicalApi.updateSecret(workspaceId, selectedSecret.secretKey, formValues, {
+        await infisicalApi.updateSecret(entityRef, selectedSecret.secretKey, formValues, {
           path: currentPath !== '/' ? currentPath : undefined,
           environment: selectedEnvironment
         });
@@ -423,7 +474,7 @@ export const EntityInfisicalSecretsContent = ({ workspaceId, environment, secret
     }
   }, [
     infisicalApi,
-    workspaceId,
+    entityRef,
     currentPath,
     selectedEnvironment,
     fetchSecrets,
@@ -447,7 +498,7 @@ export const EntityInfisicalSecretsContent = ({ workspaceId, environment, secret
     if (!secretToDelete || !selectedEnvironment) return;
 
     try {
-      await infisicalApi.deleteSecret(workspaceId, secretToDelete.secretKey, {
+      await infisicalApi.deleteSecret(entityRef, secretToDelete.secretKey, {
         path: currentPath !== '/' ? currentPath : undefined,
         environment: selectedEnvironment
       });
@@ -487,7 +538,7 @@ export const EntityInfisicalSecretsContent = ({ workspaceId, environment, secret
     infisicalApi,
     secretToDelete,
     selectedEnvironment,
-    workspaceId,
+    entityRef,
     errorApi
   ]);
 
@@ -501,7 +552,7 @@ export const EntityInfisicalSecretsContent = ({ workspaceId, environment, secret
 
     let secret: InfisicalSecret | null = null;
     try {
-      secret = await infisicalApi.getSecretByKey(workspaceId, secretKey, {
+      secret = await infisicalApi.getSecretByKey(entityRef, secretKey, {
         path: currentPath !== '/' ? currentPath : undefined,
         environment: selectedEnvironment,
       });
@@ -522,7 +573,9 @@ export const EntityInfisicalSecretsContent = ({ workspaceId, environment, secret
       }));
     } catch (err) {
       alertApi.post({
-        message: 'Failed to load secret value',
+        message: isForbidden(err)
+          ? "You don't have permission to view this secret's value"
+          : 'Failed to load secret value',
         severity: 'error',
       });
     } finally {
@@ -533,7 +586,7 @@ export const EntityInfisicalSecretsContent = ({ workspaceId, environment, secret
       // eslint-disable-next-line consistent-return, no-unsafe-finally
       return secret;
     }
-  }, [infisicalApi, workspaceId, currentPath, selectedEnvironment, alertApi]);
+  }, [infisicalApi, entityRef, currentPath, selectedEnvironment, alertApi]);
 
   const toggleValueVisibility = useCallback((secretId: string, secretKey?: string) => {
     if (!secretKey) return;
@@ -731,7 +784,9 @@ export const EntityInfisicalSecretsContent = ({ workspaceId, environment, secret
     if (currentPath === basePath) {
       return {
         title: "No secrets or folders found",
-        description: "This location doesn't have any secrets or folders yet. Create your first secret to get started."
+        description: canCreate
+          ? "This location doesn't have any secrets or folders yet. Create your first secret to get started."
+          : "This location doesn't have any secrets or folders yet."
       };
     }
 
@@ -739,7 +794,7 @@ export const EntityInfisicalSecretsContent = ({ workspaceId, environment, secret
       title: "Empty folder",
       description: "This folder doesn't have any secrets or subfolders yet."
     };
-  }, [currentPath, basePath, selectedEnvironment, searchText]);
+  }, [currentPath, basePath, selectedEnvironment, searchText, canCreate]);
 
   const columns: TableColumn<TableItem>[] = [
     {
@@ -800,20 +855,22 @@ export const EntityInfisicalSecretsContent = ({ workspaceId, environment, secret
                 '••••••••••••'
               )}
             </span>
-            <IconButton
-              size="small"
-              onClick={() => toggleValueVisibility(rowData.id, rowData.secretKey)}
-              aria-label={isVisible ? 'Hide value' : 'Show value'}
-              disabled={isLoading}
-            >
-              {isLoading ? (
-                <CircularProgress size={16} className={classes.loadingIconSmall} />
-              ) : isVisible ? (
-                <VisibilityOffIcon fontSize="small" />
-              ) : (
-                <VisibilityIcon fontSize="small" />
-              )}
-            </IconButton>
+            {canReadValues && (
+              <IconButton
+                size="small"
+                onClick={() => toggleValueVisibility(rowData.id, rowData.secretKey)}
+                aria-label={isVisible ? 'Hide value' : 'Show value'}
+                disabled={isLoading}
+              >
+                {isLoading ? (
+                  <CircularProgress size={16} className={classes.loadingIconSmall} />
+                ) : isVisible ? (
+                  <VisibilityOffIcon fontSize="small" />
+                ) : (
+                  <VisibilityIcon fontSize="small" />
+                )}
+              </IconButton>
+            )}
           </div>
         );
       },
@@ -830,25 +887,33 @@ export const EntityInfisicalSecretsContent = ({ workspaceId, environment, secret
           return null;
         }
 
+        if (!canUpdate && !canDelete) {
+          return null;
+        }
+
         return (
           <div className={classes.actions}>
-            <IconButton
-              aria-label="edit"
-              onClick={() => handleOpenDialog('edit', rowData as InfisicalSecret)}
-              size="small"
-              className={classes.actionButton}
-            >
-              <EditIcon fontSize="small" />
-            </IconButton>
-            <IconButton
-              aria-label="delete"
-              onClick={() => handleOpenDeleteDialog(rowData as InfisicalSecret)}
-              size="small"
-              color="secondary"
-              className={classes.actionButton}
-            >
-              <DeleteIcon fontSize="small" />
-            </IconButton>
+            {canUpdate && (
+              <IconButton
+                aria-label="edit"
+                onClick={() => handleOpenDialog('edit', rowData as InfisicalSecret)}
+                size="small"
+                className={classes.actionButton}
+              >
+                <EditIcon fontSize="small" />
+              </IconButton>
+            )}
+            {canDelete && (
+              <IconButton
+                aria-label="delete"
+                onClick={() => handleOpenDeleteDialog(rowData as InfisicalSecret)}
+                size="small"
+                color="secondary"
+                className={classes.actionButton}
+              >
+                <DeleteIcon fontSize="small" />
+              </IconButton>
+            )}
           </div>
         );
       },
@@ -861,6 +926,18 @@ export const EntityInfisicalSecretsContent = ({ workspaceId, environment, secret
 
   if (loading && selectedEnvironment) {
     return <Progress />;
+  }
+
+  if (accessDenied || (error && isForbidden(error))) {
+    return (
+      <InfoCard title={cardTitle}>
+        <EmptyState
+          missing="info"
+          title={PERMISSION_DENIED_TITLE}
+          description={PERMISSION_DENIED_DESCRIPTION}
+        />
+      </InfoCard>
+    );
   }
 
   if (error) {
@@ -908,17 +985,19 @@ export const EntityInfisicalSecretsContent = ({ workspaceId, environment, secret
                 </div>
               )}
             </div>
-            <Button
-              variant="contained"
-              color="primary"
-              size="small"
-              startIcon={<AddIcon />}
-              onClick={() => handleOpenDialog('create')}
-              className={classes.addButton}
-              disabled={!selectedEnvironment}
-            >
-              ADD SECRET
-            </Button>
+            {canCreate && (
+              <Button
+                variant="contained"
+                color="primary"
+                size="small"
+                startIcon={<AddIcon />}
+                onClick={() => handleOpenDialog('create')}
+                className={classes.addButton}
+                disabled={!selectedEnvironment}
+              >
+                ADD SECRET
+              </Button>
+            )}
           </div>
         </div>
 

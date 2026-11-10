@@ -29,8 +29,8 @@ jest.mock('@backstage/plugin-catalog-react', () => ({
 }));
 
 describe('EntitySecretsProvider', () => {
-    const mockChildComponent = jest.fn().mockImplementation((workspaceId: string) => (
-        <div data-testid="child-component">Project ID: {workspaceId}</div>
+    const mockChildComponent = jest.fn().mockImplementation((entityRef: string) => (
+        <div data-testid="child-component">Entity: {entityRef}</div>
     ));
 
     beforeEach(() => {
@@ -60,12 +60,16 @@ describe('EntitySecretsProvider', () => {
             </EntitySecretsProvider>
         );
 
-        // Child component should be rendered with the project ID
+        // Child component should be rendered with the entity reference
         expect(screen.getByTestId('child-component')).toBeInTheDocument();
-        expect(screen.getByText('Project ID: test-project-id')).toBeInTheDocument();
+        expect(screen.getByText('Entity: component:default/test-component')).toBeInTheDocument();
 
-        // The mock child component should have been called with the project ID
-        expect(mockChildComponent).toHaveBeenCalledWith('test-project-id');
+        // The mock child component should have been called with the entity ref and annotations
+        expect(mockChildComponent).toHaveBeenCalledWith(
+            'component:default/test-component',
+            undefined,
+            undefined,
+        );
     });
 
     it('shows empty state when project annotation is missing', () => {

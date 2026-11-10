@@ -4,24 +4,31 @@
 
 import React, { ReactNode } from 'react';
 import { useEntity } from '@backstage/plugin-catalog-react';
+import { stringifyEntityRef } from '@backstage/catalog-model';
 import { InfoCard, EmptyState } from '@backstage/core-components';
 import { Typography } from '@material-ui/core';
+import {
+    INFISICAL_PROJECT_ANNOTATION,
+    INFISICAL_ENVIRONMENT_ANNOTATION,
+    INFISICAL_SECRET_PATH_ANNOTATION,
+} from '@infisical/backstage-plugin-infisical-common';
 
-/**
- * Annotation key for Infisical project ID
- */
-export const INFISICAL_PROJECT_ANNOTATION = 'infisical/projectId';
-export const INFISICAL_ENVIRONMENT_ANNOTATION = 'infisical/environment';
-export const INFISICAL_SECRET_PATH_ANNOTATION = 'infisical/secretPath';
+export {
+    INFISICAL_PROJECT_ANNOTATION,
+    INFISICAL_ENVIRONMENT_ANNOTATION,
+    INFISICAL_SECRET_PATH_ANNOTATION,
+};
 
 /**
  * Props for EntitySecretsProvider
  */
 export interface EntitySecretsProviderProps {
     /**
-     * Render function that receives the workspace ID
+     * Render function that receives the entity reference the secrets are
+     * accessed through, plus the environment lock and secret path annotations
+     * (used only to shape the UI; the backend enforces them).
      */
-    children: (workspaceId: string, environment?: string, secretPath?: string) => ReactNode;
+    children: (entityRef: string, environment?: string, secretPath?: string) => ReactNode;
 }
 
 /**
@@ -32,6 +39,7 @@ export const EntitySecretsProvider: React.FC<EntitySecretsProviderProps> = ({
     children
 }) => {
     const { entity } = useEntity();
+    const entityRef = stringifyEntityRef(entity);
     const workspaceId = entity.metadata.annotations?.[INFISICAL_PROJECT_ANNOTATION];
     const environment = entity.metadata.annotations?.[INFISICAL_ENVIRONMENT_ANNOTATION];
     const secretPath = entity.metadata.annotations?.[INFISICAL_SECRET_PATH_ANNOTATION];
@@ -62,5 +70,5 @@ export const EntitySecretsProvider: React.FC<EntitySecretsProviderProps> = ({
         );
     }
 
-    return <>{children(workspaceId, environment, secretPath)}</>;
+    return <>{children(entityRef, environment, secretPath)}</>;
 };

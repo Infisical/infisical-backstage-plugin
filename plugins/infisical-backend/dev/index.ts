@@ -20,6 +20,9 @@ backend.add(
         metadata: {
           name: 'sample',
           title: 'Sample Component',
+          annotations: {
+            'infisical/projectId': 'replace-with-your-project-id',
+          },
         },
         spec: {
           type: 'service',

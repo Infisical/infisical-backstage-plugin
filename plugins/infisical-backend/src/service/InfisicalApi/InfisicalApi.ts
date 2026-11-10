@@ -60,6 +60,49 @@ interface RequestOptions {
   retry?: boolean;
   /** Custom query parameters */
   queryParams?: Record<string, string | undefined>;
+  /** Who and what the request is made for, sent in the User-Agent header */
+  context?: InfisicalRequestContext;
+}
+
+/**
+ * Describes who triggered an Infisical request from Backstage. It is sent in
+ * the `User-Agent` header, which Infisical stores in its audit log.
+ * @public
+ */
+export interface InfisicalRequestContext {
+  /** The Backstage principal, e.g. `user:default/jane` or `service:scaffolder` */
+  userRef?: string;
+  /** The catalog entity the secrets are accessed through */
+  entityRef?: string;
+}
+
+/**
+ * Product token used as the `User-Agent` for every Infisical request.
+ * @public
+ */
+export const INFISICAL_USER_AGENT = 'backstage-plugin-infisical';
+
+/**
+ * Builds the `User-Agent` header for an Infisical request, for example
+ * `backstage-plugin-infisical (user=user:default/jane; entity=component:default/api)`.
+ * Characters outside printable ASCII are dropped so the header is always valid.
+ * @public
+ */
+export function buildUserAgent(context?: InfisicalRequestContext): string {
+  const sanitize = (value: string) =>
+    value.replace(/[^\x20-\x7E]/g, '').replace(/[();]/g, '').trim();
+
+  const parts: string[] = [];
+  if (context?.userRef) {
+    parts.push(`user=${sanitize(context.userRef)}`);
+  }
+  if (context?.entityRef) {
+    parts.push(`entity=${sanitize(context.entityRef)}`);
+  }
+
+  return parts.length > 0
+    ? `${INFISICAL_USER_AGENT} (${parts.join('; ')})`
+    : INFISICAL_USER_AGENT;
 }
 
 /**
@@ -71,6 +114,13 @@ export interface InfisicalApiClientOptions {
   config: Config;
   /** Logger instance */
   logger: LoggerService;
+  /**
+   * The authentication block to use (containing `auth_token` or
+   * `universalAuth`). Defaults to `infisical.authentication`.
+   */
+  authentication?: Config;
+  /** Name of the machine identity from `infisical.identities`, if any */
+  identityName?: string;
 }
 
 /**
@@ -90,16 +140,24 @@ export class InfisicalApiClient {
    * Create a new Infisical API client
    */
   constructor(options: InfisicalApiClientOptions) {
-    const { config, logger } = options;
+    const { config, logger, authentication, identityName } = options;
 
-    this.logger = logger.child({ service: 'InfisicalApiClient' });
+    this.logger = logger.child({
+      service: 'InfisicalApiClient',
+      identity: identityName ?? 'default',
+    });
 
     try {
       this.baseUrl = this.getBaseUrlFromConfig(config);
-      this.credentials = this.getCredentialsFromConfig(config);
+      this.credentials = this.getCredentialsFromConfig(
+        authentication ?? config.getOptionalConfig('infisical.authentication'),
+        identityName,
+      );
 
       this.logger.info(
-        `Initialized Infisical API client with base URL: ${this.baseUrl}`,
+        `Initialized Infisical API client for identity '${
+          identityName ?? 'default'
+        }' with base URL: ${this.baseUrl}`,
       );
     } catch (error) {
       this.logger.error(`Failed to initialize Infisical API client: ${error}`);
@@ -126,36 +184,33 @@ export class InfisicalApiClient {
    * Extract auth credentials from config
    * @internal
    */
-  private getCredentialsFromConfig(config: Config): AuthCredentials {
+  private getCredentialsFromConfig(
+    authConfig: Config | undefined,
+    identityName?: string,
+  ): AuthCredentials {
     try {
-      const infisicalConfig = config.getConfig('infisical');
-
       // Check for API token auth
-      if (infisicalConfig.has('authentication.auth_token')) {
+      if (authConfig?.has('auth_token')) {
         return {
           type: 'api-token',
-          apiToken: infisicalConfig.getString(
-            'authentication.auth_token.token',
-          ),
+          apiToken: authConfig.getString('auth_token.token'),
         };
       }
 
       // Check for client credentials auth
-      if (infisicalConfig.has('authentication.universalAuth')) {
+      if (authConfig?.has('universalAuth')) {
         return {
           type: 'client-credentials',
-          clientId: infisicalConfig.getString(
-            'authentication.universalAuth.clientId',
-          ),
-          clientSecret: infisicalConfig.getString(
-            'authentication.universalAuth.clientSecret',
-          ),
+          clientId: authConfig.getString('universalAuth.clientId'),
+          clientSecret: authConfig.getString('universalAuth.clientSecret'),
         };
       }
 
       // No valid auth methods found
       throw new Error(
-        'Missing Infisical Authentication credentials. Configure either auth_token or universalAuth on your infisical.authentication settings.',
+        identityName
+          ? `Missing Infisical Authentication credentials for identity '${identityName}'. Configure either auth_token or universalAuth on your infisical.identities.${identityName} settings.`
+          : 'Missing Infisical Authentication credentials. Configure either auth_token or universalAuth on your infisical.authentication settings.',
       );
     } catch (error) {
       if (error instanceof Error) {
@@ -196,6 +251,7 @@ export class InfisicalApiClient {
         headers: {
           'Content-Type': 'application/json',
           Accept: 'application/json',
+          'User-Agent': buildUserAgent(),
         },
         body: JSON.stringify({
           clientId: this.credentials.clientId,
@@ -353,7 +409,7 @@ export class InfisicalApiClient {
     options: RequestOptions,
     retryCount: number = 0,
   ): Promise<T> {
-    const { method, path, body, queryParams } = options;
+    const { method, path, body, queryParams, context } = options;
     const url = this.buildUrl(path, queryParams);
     const retry = options.retry !== false;
 
@@ -369,6 +425,7 @@ export class InfisicalApiClient {
         Authorization: authHeader,
         'Content-Type': 'application/json',
         Accept: 'application/json',
+        'User-Agent': buildUserAgent(context),
       };
 
       const response = await fetch(url, {
@@ -464,6 +521,7 @@ export class InfisicalApiClient {
    * @param workspaceId - The Infisical workspace ID
    * @param path - Optional path to filter secrets
    * @param environment - Optional environment to filter secrets
+   * @param context - Who the request is made for (sent as User-Agent)
    * @returns A promise resolving to secrets and folders
    * @public
    */
@@ -471,6 +529,7 @@ export class InfisicalApiClient {
     workspaceId: string,
     path?: string,
     environment?: string,
+    context?: InfisicalRequestContext,
   ): Promise<{
     secrets: InfisicalSecret[];
     folders: any[];
@@ -493,6 +552,7 @@ export class InfisicalApiClient {
           secretPath: path,
           viewSecretValue: 'false',
         },
+        context,
       });
 
       // Get folders
@@ -505,6 +565,7 @@ export class InfisicalApiClient {
           include_imports: 'true',
           path,
         },
+        context,
       });
 
       // Process and combine secrets and imported secrets
@@ -536,6 +597,7 @@ export class InfisicalApiClient {
    * @param workspaceId - ID of the workspace containing the secret
    * @param secretId - ID of the secret to fetch
    * @param options - Optional path and environment
+   * @param context - Who the request is made for (sent as User-Agent)
    */
   async getSecretById(
     workspaceId: string,
@@ -544,6 +606,7 @@ export class InfisicalApiClient {
       environment?: string;
       path?: string;
     },
+    context?: InfisicalRequestContext,
   ): Promise<InfisicalSecret> {
     this.logger.info(
       `Fetching secret ${secretId} from Infisical (workspace: ${workspaceId}, path: ${
@@ -560,6 +623,7 @@ export class InfisicalApiClient {
         secretPath: options?.path,
         include_imports: 'true',
       },
+      context,
     });
 
     return await response.secret;
@@ -569,11 +633,13 @@ export class InfisicalApiClient {
    * Create a new secret
    *
    * @param secretData - Request data for creating a secret
+   * @param context - Who the request is made for (sent as User-Agent)
    * @returns A promise resolving to the created secret
    * @public
    */
   async createSecret(
     secretData: InfisicalSecretCreateRequest,
+    context?: InfisicalRequestContext,
   ): Promise<InfisicalSecret> {
     this.logger.info(
       `Creating secret ${secretData.secretKey} in Infisical (workspace: ${secretData.workspaceId})`,
@@ -584,6 +650,7 @@ export class InfisicalApiClient {
         method: 'POST',
         path: `/v3/secrets/raw/${secretData.secretKey}`,
         body: secretData,
+        context,
       });
 
       this.logger.info(`Successfully created secret ${secretData.secretKey}`);
@@ -598,12 +665,15 @@ export class InfisicalApiClient {
    * Update an existing secret
    *
    * @param secretData - Request data for updating a secret
+   * @param secretId - ID (key) of the secret to update
+   * @param context - Who the request is made for (sent as User-Agent)
    * @returns A promise resolving to the updated secret
    * @public
    */
   async updateSecret(
     secretData: InfisicalSecretUpdateRequest,
     secretId: string,
+    context?: InfisicalRequestContext,
   ): Promise<InfisicalSecret> {
     this.logger.info(
       `Updating secret ${secretId} in Infisical (workspace: ${secretData.workspaceId})`,
@@ -617,6 +687,7 @@ export class InfisicalApiClient {
           ...secretData,
           newSecretName: secretData.secretKey !== secretId ? secretData.secretKey : undefined,
         },
+        context,
       });
 
       this.logger.info(`Successfully updated secret ${secretData.secretKey}`);
@@ -632,11 +703,13 @@ export class InfisicalApiClient {
    *
    * @param secretId - ID of the secret to delete
    * @param secretData - Additional data required for deletion
+   * @param context - Who the request is made for (sent as User-Agent)
    * @public
    */
   async deleteSecret(
     secretId: string,
     secretData: InfisicalSecretDeleteRequest,
+    context?: InfisicalRequestContext,
   ): Promise<void> {
     this.logger.info(
       `Deleting secret ${secretId} from Infisical (workspace: ${secretData.workspaceId})`,
@@ -647,6 +720,7 @@ export class InfisicalApiClient {
         method: 'DELETE',
         path: `/v3/secrets/raw/${secretId}`,
         body: secretData,
+        context,
       });
 
       this.logger.info(`Successfully deleted secret ${secretId}`);
@@ -660,10 +734,14 @@ export class InfisicalApiClient {
    * Get all environments for a workspace
    *
    * @param workspaceId - The Infisical workspace ID
+   * @param context - Who the request is made for (sent as User-Agent)
    * @returns A promise resolving to project/workspace details
    * @public
    */
-  async getEnvironments(workspaceId: string): Promise<InfisicalProject> {
+  async getEnvironments(
+    workspaceId: string,
+    context?: InfisicalRequestContext,
+  ): Promise<InfisicalProject> {
     this.logger.info(
       `Fetching environments from Infisical (workspace: ${workspaceId})`,
     );
@@ -674,6 +752,7 @@ export class InfisicalApiClient {
       }>({
         method: 'GET',
         path: `/v1/workspace/${workspaceId}`,
+        context,
       });
 
       this.logger.info(
