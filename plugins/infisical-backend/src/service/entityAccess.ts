@@ -31,6 +31,12 @@ export interface ResolvedEntityAccess {
    * `undefined` for the default `infisical.authentication` identity
    */
   identity?: string;
+  /**
+   * Names of the identities from the entity's `infisical/identity.<environment>`
+   * annotations. Used to list the project's environments when no identity
+   * could be picked without knowing the environment.
+   */
+  environmentIdentities: string[];
 }
 
 /**
@@ -125,6 +131,22 @@ export function resolveIdentityName(
 }
 
 /**
+ * Returns the distinct identities named by an entity's
+ * `infisical/identity.<environment>` annotations, in annotation order.
+ * @public
+ */
+export function resolveEnvironmentIdentityNames(
+  annotations: Record<string, string>,
+): string[] {
+  const prefix = `${INFISICAL_IDENTITY_ANNOTATION}.`;
+  const names = Object.entries(annotations)
+    .filter(([key]) => key.startsWith(prefix))
+    .map(([, value]) => value?.trim())
+    .filter(Boolean);
+  return [...new Set(names)];
+}
+
+/**
  * Validates that a value is a well-formed entity reference.
  * @public
  */
@@ -191,5 +213,11 @@ export async function resolveEntityAccess(
 
   const identity = resolveIdentityName(annotations, environment);
 
-  return { workspaceId, environment, path, identity };
+  return {
+    workspaceId,
+    environment,
+    path,
+    identity,
+    environmentIdentities: resolveEnvironmentIdentityNames(annotations),
+  };
 }

@@ -14,6 +14,7 @@ import {
   NotFoundError,
   ConflictError,
   NotAllowedError,
+  ServiceUnavailableError,
 } from '@backstage/errors';
 import {
   infisicalSecretCreatePermission,
@@ -1182,13 +1183,107 @@ describe('infisical router', () => {
       appWithoutDefault = express().use(router).use(mockErrorHandler());
     });
 
-    it('fails to list environments with only per-environment identities', async () => {
-      getEntityByRef.mockResolvedValue(
-        entityWith({
-          'infisical/identity.dev': 'payments-dev',
-          'infisical/identity.prod': 'payments-prod',
-        }),
-      );
+    describe('listing environments with only per-environment identities', () => {
+      const listEnvironments = () =>
+        request(appWithoutDefault).get(`/environments?entityRef=${ENTITY_REF}`);
+
+      beforeEach(() => {
+        getEntityByRef.mockResolvedValue(
+          entityWith({
+            'infisical/identity.dev': 'payments-dev',
+            'infisical/identity.prod': 'payments-prod',
+          }),
+        );
+        for (const api of Object.values(mockIdentityApis)) {
+          api.getEnvironments.mockResolvedValue(mockProject);
+        }
+      });
+
+      it('uses one of the per-environment identities', async () => {
+        const response = await listEnvironments();
+
+        expect(response.status).toBe(200);
+        expect(response.body.environments).toEqual(mockProject.environments);
+        expect(
+          mockIdentityApis['payments-dev'].getEnvironments,
+        ).toHaveBeenCalledWith(WORKSPACE_ID, CONTEXT);
+        expect(
+          mockIdentityApis['payments-prod'].getEnvironments,
+        ).not.toHaveBeenCalled();
+      });
+
+      it('tries the next identity when one has no access to the project', async () => {
+        mockIdentityApis['payments-dev'].getEnvironments.mockRejectedValue(
+          new NotAllowedError('Infisical API error (403): not a member'),
+        );
+
+        const response = await listEnvironments();
+
+        expect(response.status).toBe(200);
+        expect(
+          mockIdentityApis['payments-prod'].getEnvironments,
+        ).toHaveBeenCalledWith(WORKSPACE_ID, CONTEXT);
+      });
+
+      it('skips an identity that is not configured', async () => {
+        getEntityByRef.mockResolvedValue(
+          entityWith({
+            'infisical/identity.dev': 'unknown',
+            'infisical/identity.prod': 'payments-prod',
+          }),
+        );
+
+        const response = await listEnvironments();
+
+        expect(response.status).toBe(200);
+        expect(
+          mockIdentityApis['payments-prod'].getEnvironments,
+        ).toHaveBeenCalled();
+      });
+
+      it('fails with the last error when no identity has access', async () => {
+        for (const name of ['payments-dev', 'payments-prod']) {
+          mockIdentityApis[name].getEnvironments.mockRejectedValue(
+            new NotAllowedError(`${name} is not a member`),
+          );
+        }
+
+        const response = await listEnvironments();
+
+        expect(response.status).toBe(403);
+        expect(response.body.error.message).toContain(
+          'payments-prod is not a member',
+        );
+      });
+
+      it('does not try other identities when Infisical is unavailable', async () => {
+        mockIdentityApis['payments-dev'].getEnvironments.mockRejectedValue(
+          new ServiceUnavailableError('Infisical API error (503)'),
+        );
+
+        const response = await listEnvironments();
+
+        expect(response.status).toBe(503);
+        expect(
+          mockIdentityApis['payments-prod'].getEnvironments,
+        ).not.toHaveBeenCalled();
+      });
+
+      it('checks the permission before using any identity', async () => {
+        denyAll();
+
+        const response = await listEnvironments();
+
+        expect(response.status).toBe(403);
+        expect(response.body.error.reason).toBe('permission-denied');
+        for (const api of Object.values(mockIdentityApis)) {
+          expect(api.getEnvironments).not.toHaveBeenCalled();
+        }
+      });
+    });
+
+    it('returns 404 when the entity names no identity at all', async () => {
+      getEntityByRef.mockResolvedValue(entityWith());
 
       const response = await request(appWithoutDefault).get(
         `/environments?entityRef=${ENTITY_REF}`,
@@ -1198,9 +1293,6 @@ describe('infisical router', () => {
       expect(response.body.error.message).toContain(
         'Set the infisical/identity annotation or configure infisical.authentication',
       );
-      for (const api of Object.values(mockIdentityApis)) {
-        expect(api.getEnvironments).not.toHaveBeenCalled();
-      }
     });
   });
 });

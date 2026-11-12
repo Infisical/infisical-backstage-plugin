@@ -6,7 +6,7 @@ import {
 import express from 'express';
 import Router from 'express-promise-router';
 import { Config } from '@backstage/config';
-import { InputError } from '@backstage/errors';
+import { InputError, NotAllowedError, NotFoundError } from '@backstage/errors';
 import {
   AuthorizeResult,
   ResourcePermission,
@@ -28,6 +28,7 @@ import {
 import { forbiddenError } from './errors';
 import { InfisicalIdentityRegistry } from './identities';
 import {
+  InfisicalProject,
   InfisicalSecret,
   InfisicalSecretCreateHttpRequest,
   InfisicalSecretCreateRequest,
@@ -180,7 +181,9 @@ export async function createRouter(
    *    permissions are evaluated in the same round trip and returned.
    * 5. Picks the client for the entity's machine identity (404/403). This
    *    runs only after the permission check so that callers without
-   *    permission learn nothing about the identity configuration.
+   *    permission learn nothing about the identity configuration. The client
+   *    is resolved when `api` is read, so a route that picks the identity
+   *    itself can use `clientFor` instead.
    */
   async function entityScoped(
     request: express.Request,
@@ -222,9 +225,15 @@ export async function createRouter(
       );
     }
 
+    const clientFor = (identity: string | undefined) =>
+      identities.getClient(identity, entityRef);
+
     return {
       access,
-      api: identities.getClient(access.identity, entityRef),
+      clientFor,
+      get api() {
+        return clientFor(access.identity);
+      },
       context: { userRef: credentials.principal.userEntityRef, entityRef },
       optionalAllowed,
     };
@@ -307,15 +316,56 @@ export async function createRouter(
    *
    * Requires `infisical.secret.describe`. When the entity is locked to an
    * environment only that environment is returned.
+   *
+   * This request targets no environment, so an entity that only has
+   * `infisical/identity.<environment>` annotations has no identity for it
+   * when there is no default one. Its per-environment identities are tried
+   * instead, since each of them can read the project it belongs to.
    */
   router.get('/environments', async (request, response) => {
-    const { access, api, context } = await entityScoped(
+    const { access, clientFor, context } = await entityScoped(
       request,
       { entityRef: request.query.entityRef },
       infisicalSecretDescribePermission,
     );
 
-    const project = await api.getEnvironments(access.workspaceId, context);
+    const useEnvironmentIdentities =
+      access.identity === undefined &&
+      !identities.hasDefaultIdentity() &&
+      access.environmentIdentities.length > 0;
+
+    let project: InfisicalProject | undefined;
+    if (useEnvironmentIdentities) {
+      let lastError: unknown;
+      for (const identity of access.environmentIdentities) {
+        try {
+          project = await clientFor(identity).getEnvironments(
+            access.workspaceId,
+            context,
+          );
+          break;
+        } catch (error) {
+          // This identity is not configured, may not be used by the entity or
+          // has no access to the project: the next one may. Anything else
+          // (e.g. Infisical being unavailable) would fail for all of them.
+          if (
+            !(error instanceof NotAllowedError) &&
+            !(error instanceof NotFoundError)
+          ) {
+            throw error;
+          }
+          lastError = error;
+        }
+      }
+      if (!project) {
+        throw lastError;
+      }
+    } else {
+      project = await clientFor(access.identity).getEnvironments(
+        access.workspaceId,
+        context,
+      );
+    }
 
     const environments = access.environment
       ? project.environments.filter(env => env.slug === access.environment)

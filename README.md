@@ -184,7 +184,7 @@ metadata:
     infisical/identity.prod: payments-prod  # used for the prod environment
 ```
 
-For each request the backend picks `infisical/identity.<environment>` when the request targets that environment, otherwise `infisical/identity`, otherwise the default `infisical.authentication` identity. Listing environments targets no environment (unless the entity is locked with `infisical/environment`), so the identity from `infisical/identity` or the default identity must be able to read the project.
+For each request the backend picks `infisical/identity.<environment>` when the request targets that environment, otherwise `infisical/identity`, otherwise the default `infisical.authentication` identity. Listing environments targets no environment (unless the entity is locked with `infisical/environment`), so it uses the identity from `infisical/identity` or the default identity, which must be able to read the project. When the entity has neither and only names per-environment identities, those are tried in annotation order until one can read the project.
 
 
 #### Secret Path Behavior

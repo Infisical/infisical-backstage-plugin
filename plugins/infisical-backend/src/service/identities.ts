@@ -105,6 +105,11 @@ export class InfisicalIdentityRegistry {
     );
   }
 
+  /** Whether the default `infisical.authentication` identity is configured */
+  hasDefaultIdentity(): boolean {
+    return this.defaultClient !== undefined;
+  }
+
   /**
    * Returns the client for an identity on behalf of an entity.
    *

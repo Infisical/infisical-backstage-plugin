@@ -5,6 +5,7 @@ import { normalizeSecretPath } from '@infisical/backstage-plugin-infisical-commo
 import {
   resolveEntityAccess,
   resolveEnvironment,
+  resolveEnvironmentIdentityNames,
   resolveIdentityName,
   resolveSecretPath,
   validateEntityRef,
@@ -133,6 +134,20 @@ describe('resolveIdentityName', () => {
     expect(resolveIdentityName(annotations, undefined)).toBe('team-a');
   });
 
+  it('lists the distinct per-environment identities', () => {
+    expect(
+      resolveEnvironmentIdentityNames({
+        'infisical/projectId': 'project-1',
+        'infisical/identity': 'team-a',
+        'infisical/identity.dev': 'team-a-dev',
+        'infisical/identity.staging': ' team-a-dev ',
+        'infisical/identity.prod': 'team-a-prod',
+        'infisical/identity.blank': '  ',
+      }),
+    ).toEqual(['team-a-dev', 'team-a-prod']);
+    expect(resolveEnvironmentIdentityNames({})).toEqual([]);
+  });
+
   it('prefers the per-environment identity for that environment', () => {
     const annotations = {
       'infisical/identity': 'team-a',
@@ -192,6 +207,7 @@ describe('resolveEntityAccess', () => {
       workspaceId: 'project-1',
       environment: 'staging',
       path: '/api/sub',
+      environmentIdentities: [],
     });
 
     expect(getEntityByRef).toHaveBeenCalledWith('component:default/foo', {
@@ -225,6 +241,7 @@ describe('resolveEntityAccess', () => {
       environment: 'prod',
       path: '/',
       identity: 'team-a-prod',
+      environmentIdentities: ['team-a-prod'],
     });
   });
 
