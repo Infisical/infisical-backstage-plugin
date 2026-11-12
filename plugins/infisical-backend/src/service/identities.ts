@@ -1,8 +1,12 @@
 import { LoggerService } from '@backstage/backend-plugin-api';
 import { parseEntityRef, stringifyEntityRef } from '@backstage/catalog-model';
 import { Config } from '@backstage/config';
-import { NotAllowedError, NotFoundError } from '@backstage/errors';
-import { INFISICAL_IDENTITY_ANNOTATION } from '@infisical/backstage-plugin-infisical-common';
+import { NotFoundError } from '@backstage/errors';
+import {
+  INFISICAL_FORBIDDEN_REASONS,
+  INFISICAL_IDENTITY_ANNOTATION,
+} from '@infisical/backstage-plugin-infisical-common';
+import { forbiddenError } from './errors';
 import { InfisicalApiClient } from './InfisicalApi';
 
 /**
@@ -134,7 +138,8 @@ export class InfisicalIdentityRegistry {
       identity.allowedEntityRefs &&
       !identity.allowedEntityRefs.has(normalizeEntityRef(entityRef))
     ) {
-      throw new NotAllowedError(
+      throw forbiddenError(
+        INFISICAL_FORBIDDEN_REASONS.identityNotAllowed,
         `Entity '${entityRef}' is not allowed to use Infisical identity '${identityName}'`,
       );
     }

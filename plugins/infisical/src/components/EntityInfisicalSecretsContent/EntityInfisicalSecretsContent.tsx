@@ -49,6 +49,7 @@ import { ResponseError } from '@backstage/errors';
 import { usePermission } from '@backstage/plugin-permission-react';
 import { ResourcePermission } from '@backstage/plugin-permission-common';
 import {
+  INFISICAL_FORBIDDEN_REASONS,
   infisicalSecretCreatePermission,
   infisicalSecretDeletePermission,
   infisicalSecretUpdatePermission,
@@ -270,6 +271,44 @@ function navigationLimits(secretPath?: string) {
 const PERMISSION_DENIED_TITLE = "You don't have permission to view these secrets";
 const PERMISSION_DENIED_DESCRIPTION =
   'Ask the owner of this entity or your Backstage administrator for access to Infisical secrets.';
+const RESTRICTED_TITLE = "This entity can't access these secrets";
+const MISCONFIGURED_TITLE = 'Infisical access is not set up correctly for this entity';
+const MISCONFIGURED_HELP =
+  'Ask your Backstage administrator to check the Infisical configuration.';
+
+const forbiddenReason = (err: unknown): string | undefined => {
+  if (!isForbidden(err)) {
+    return undefined;
+  }
+  const reason = (err as ResponseError).body?.error?.reason;
+  return typeof reason === 'string' ? reason : undefined;
+};
+
+const isConfigurationProblem = (err: unknown): boolean => {
+  const reason = forbiddenReason(err);
+  return (
+    reason === INFISICAL_FORBIDDEN_REASONS.entityRestriction ||
+    reason === INFISICAL_FORBIDDEN_REASONS.identityNotAllowed ||
+    reason === INFISICAL_FORBIDDEN_REASONS.infisicalForbidden
+  );
+};
+
+const forbiddenMessage = (err: unknown): { title: string; description: string } => {
+  if (!isConfigurationProblem(err)) {
+    return {
+      title: PERMISSION_DENIED_TITLE,
+      description: PERMISSION_DENIED_DESCRIPTION,
+    };
+  }
+  const { message } = err as ResponseError;
+  if (forbiddenReason(err) === INFISICAL_FORBIDDEN_REASONS.entityRestriction) {
+    return { title: RESTRICTED_TITLE, description: message };
+  }
+  return {
+    title: MISCONFIGURED_TITLE,
+    description: `${message.replace(/\.$/, '')}. ${MISCONFIGURED_HELP}`,
+  };
+};
 
 /**
  * Create a type for the combined data
@@ -297,9 +336,9 @@ export const EntityInfisicalSecretsContent = ({ entityRef, environment, secretPa
   const canDelete = useAllowed(infisicalSecretDeletePermission, entityRef);
   const canReadValues = useAllowed(infisicalSecretValueReadPermission, entityRef);
 
-  // Set when the backend denied listing environments. A denied secrets
-  // listing surfaces as the `error` of the secrets fetch instead.
-  const [accessDenied, setAccessDenied] = useState(false);
+  // The 403 the backend answered listing environments with, if any. A denied
+  // secrets listing surfaces as the `error` of the secrets fetch instead.
+  const [environmentsDenied, setEnvironmentsDenied] = useState<unknown>();
 
   // State for environments
   const [environments, setEnvironments] = useState<InfisicalEnvironment[]>([]);
@@ -354,7 +393,7 @@ export const EntityInfisicalSecretsContent = ({ entityRef, environment, secretPa
         setLoadingEnvironments(true);
         // A previous lookup may have been denied (e.g. for another
         // environment's identity); only this lookup's outcome counts
-        setAccessDenied(false);
+        setEnvironmentsDenied(undefined);
         const { environments: envs, name } = await infisicalApi.getEnvironments(entityRef);
         if (stale) return;
         setEnvironments(envs);
@@ -375,7 +414,7 @@ export const EntityInfisicalSecretsContent = ({ entityRef, environment, secretPa
       } catch (err) {
         if (stale) return;
         if (isForbidden(err)) {
-          setAccessDenied(true);
+          setEnvironmentsDenied(err);
         } else {
           errorApi.post(err as ErrorApiError);
         }
@@ -566,12 +605,13 @@ export const EntityInfisicalSecretsContent = ({ entityRef, environment, secretPa
         [secretId]: true,
       }));
     } catch (err) {
-      alertApi.post({
-        message: isForbidden(err)
-          ? "You don't have permission to view this secret's value"
-          : 'Failed to load secret value',
-        severity: 'error',
-      });
+      let message = 'Failed to load secret value';
+      if (isConfigurationProblem(err)) {
+        message = (err as ResponseError).message;
+      } else if (isForbidden(err)) {
+        message = "You don't have permission to view this secret's value";
+      }
+      alertApi.post({ message, severity: 'error' });
     } finally {
       setLoadingSecretValues(prev => ({
         ...prev,
@@ -922,20 +962,14 @@ export const EntityInfisicalSecretsContent = ({ entityRef, environment, secretPa
     return <Progress />;
   }
 
-  if (accessDenied || isForbidden(error)) {
+  // Without the environments there is no selector to keep, so this replaces
+  // the whole card
+  if (environmentsDenied) {
     return (
       <InfoCard title={cardTitle}>
-        <EmptyState
-          missing="info"
-          title={PERMISSION_DENIED_TITLE}
-          description={PERMISSION_DENIED_DESCRIPTION}
-        />
+        <EmptyState missing="info" {...forbiddenMessage(environmentsDenied)} />
       </InfoCard>
     );
-  }
-
-  if (error) {
-    return <ErrorPanel error={error} />;
   }
 
   const emptyStateMessages = getEmptyStateMessages();
@@ -948,55 +982,67 @@ export const EntityInfisicalSecretsContent = ({ entityRef, environment, secretPa
           <div className={classes.breadcrumbsContainer}>
             {getBreadcrumbs()}
           </div>
-          <div className={classes.actionsContainer}>
-            <div className={classes.searchContainer}>
-              <div className={classes.searchIcon}>
-                <SearchIcon />
-              </div>
-              <InputBase
-                placeholder="Filter"
-                classes={{
-                  root: classes.inputRoot,
-                  input: classes.inputInput,
-                }}
-                value={searchText}
-                onChange={(e) => setSearchText(e.target.value)}
-                inputProps={{ 'aria-label': 'filter secrets' }}
-              />
-              {searchText && (
-                <div
-                  className={classes.clearIcon}
-                  onClick={() => setSearchText('')}
-                  role="button"
-                  tabIndex={0}
-                  onKeyPress={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      setSearchText('');
-                    }
-                  }}
-                >
-                  <ClearIcon fontSize="small" />
+          {/* Nothing to filter or add to while the listing failed */}
+          {!error && (
+            <div className={classes.actionsContainer}>
+              <div className={classes.searchContainer}>
+                <div className={classes.searchIcon}>
+                  <SearchIcon />
                 </div>
+                <InputBase
+                  placeholder="Filter"
+                  classes={{
+                    root: classes.inputRoot,
+                    input: classes.inputInput,
+                  }}
+                  value={searchText}
+                  onChange={(e) => setSearchText(e.target.value)}
+                  inputProps={{ 'aria-label': 'filter secrets' }}
+                />
+                {searchText && (
+                  <div
+                    className={classes.clearIcon}
+                    onClick={() => setSearchText('')}
+                    role="button"
+                    tabIndex={0}
+                    onKeyPress={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        setSearchText('');
+                      }
+                    }}
+                  >
+                    <ClearIcon fontSize="small" />
+                  </div>
+                )}
+              </div>
+              {canCreate && (
+                <Button
+                  variant="contained"
+                  color="primary"
+                  size="small"
+                  startIcon={<AddIcon />}
+                  onClick={() => handleOpenDialog('create')}
+                  className={classes.addButton}
+                  disabled={!selectedEnvironment}
+                >
+                  ADD SECRET
+                </Button>
               )}
             </div>
-            {canCreate && (
-              <Button
-                variant="contained"
-                color="primary"
-                size="small"
-                startIcon={<AddIcon />}
-                onClick={() => handleOpenDialog('create')}
-                className={classes.addButton}
-                disabled={!selectedEnvironment}
-              >
-                ADD SECRET
-              </Button>
-            )}
-          </div>
+          )}
         </div>
 
-        {/* Content table */}
-        {!selectedEnvironment || filteredData.length === 0 ? (
+        {/* Content table. A failed listing is shown here rather than in place
+            of the card, so the environment selector above stays usable */}
+        {error ? (
+          <Box mt={2}>
+            {isForbidden(error) ? (
+              <EmptyState missing="info" {...forbiddenMessage(error)} />
+            ) : (
+              <ErrorPanel error={error} />
+            )}
+          </Box>
+        ) : !selectedEnvironment || filteredData.length === 0 ? (
           <Box mt={2}>
             <EmptyState
               missing="data"

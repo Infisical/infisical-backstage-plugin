@@ -1,9 +1,10 @@
 import { BackstageCredentials } from '@backstage/backend-plugin-api';
 import { parseEntityRef } from '@backstage/catalog-model';
-import { InputError, NotAllowedError, NotFoundError } from '@backstage/errors';
+import { InputError, NotFoundError } from '@backstage/errors';
 import { CatalogService } from '@backstage/plugin-catalog-node';
 import {
   INFISICAL_ENVIRONMENT_ANNOTATION,
+  INFISICAL_FORBIDDEN_REASONS,
   INFISICAL_IDENTITY_ANNOTATION,
   INFISICAL_PROJECT_ANNOTATION,
   INFISICAL_SECRET_PATH_ANNOTATION,
@@ -11,6 +12,7 @@ import {
   normalizeSecretPath,
   parseSecretPathAnnotation,
 } from '@infisical/backstage-plugin-infisical-common';
+import { forbiddenError } from './errors';
 
 /**
  * The Infisical coordinates derived from an entity's annotations and the
@@ -68,7 +70,8 @@ export function resolveSecretPath(
     return requestedPath;
   }
 
-  throw new NotAllowedError(
+  throw forbiddenError(
+    INFISICAL_FORBIDDEN_REASONS.entityRestriction,
     `Access to secret path '${requestedPath}' is not allowed for this entity`,
   );
 }
@@ -76,6 +79,10 @@ export function resolveSecretPath(
 /**
  * Resolves the environment a caller may use given the entity's
  * `infisical/environment` annotation.
+ *
+ * The requested value is trimmed first. The result is used to look up the
+ * `infisical/identity.<environment>` annotation, so a padded value such as
+ * `" prod"` must not be able to miss it and fall back to another identity.
  * @public
  */
 export function resolveEnvironment(
@@ -83,12 +90,14 @@ export function resolveEnvironment(
   requested: string | undefined,
 ): string | undefined {
   const locked = annotation?.trim();
+  const wanted = requested?.trim();
   if (!locked) {
-    return requested || undefined;
+    return wanted || undefined;
   }
-  if (requested && requested !== locked) {
-    throw new NotAllowedError(
-      `Access to environment '${requested}' is not allowed for this entity`,
+  if (wanted && wanted !== locked) {
+    throw forbiddenError(
+      INFISICAL_FORBIDDEN_REASONS.entityRestriction,
+      `Access to environment '${wanted}' is not allowed for this entity`,
     );
   }
   return locked;

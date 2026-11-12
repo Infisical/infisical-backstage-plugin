@@ -21,14 +21,14 @@ Every route is scoped to a catalog entity through the `entityRef` parameter (for
 
 | Route | Parameters | Permission |
 |---|---|---|
-| `GET /secrets` | query: `entityRef`, `path?`, `environment?` | `infisical.secret.read` (values redacted unless `infisical.secret.value.read`) |
+| `GET /secrets` | query: `entityRef`, `path?`, `environment?` | `infisical.secret.describe` (values redacted unless `infisical.secret.value.read`) |
 | `GET /secrets/:secretId` | query: `entityRef`, `path?`, `environment?` | `infisical.secret.value.read` |
-| `GET /environments` | query: `entityRef` | `infisical.secret.read` |
+| `GET /environments` | query: `entityRef` | `infisical.secret.describe` |
 | `POST /secrets` | body: `entityRef`, `secretKey`, `secretValue`, `secretComment?`, `secretPath?`, `environment?` | `infisical.secret.create` |
 | `PATCH /secrets/:secretId` | body: same as `POST /secrets`, except `secretValue?` is optional (omit it to keep the current value) | `infisical.secret.update` |
 | `DELETE /secrets/:secretId` | body: `entityRef`, `environment?`, `secretPath?` | `infisical.secret.delete` |
 
-Responses: `400` for invalid input or path traversal attempts, `403` when the permission is denied, the environment/path is outside what the annotations allow, or the entity is not in the selected identity's `allowedEntityRefs`, `404` when the entity does not exist, has no `infisical/projectId` annotation, or references an identity that is not configured.
+Responses: `400` for invalid input or path traversal attempts, `401` without credentials, `403` for service credentials (only users are accepted), when the permission is denied, the environment/path is outside what the annotations allow, or the entity is not in the selected identity's `allowedEntityRefs`, `404` when the entity does not exist, has no `infisical/projectId` annotation, or references an identity that is not configured.
 
 See the repository README for the list of permissions and an example policy.
 

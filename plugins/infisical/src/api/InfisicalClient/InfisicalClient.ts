@@ -158,7 +158,7 @@ export class InfisicalClient implements InfisicalApi {
   private async handleApiError(response: Response): Promise<never> {
     let errorMessage = '';
     try {
-      const errorData = await response.json();
+      const errorData = await response.clone().json();
 
       // Extract the most relevant message
       if (typeof errorData === 'object') {

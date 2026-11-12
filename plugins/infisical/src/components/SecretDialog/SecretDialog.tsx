@@ -31,6 +31,9 @@ const useStyles = makeStyles(theme => ({
  */
 const HIDDEN_VALUE = '<hidden-by-infisical>';
 
+const VALUE_LOAD_FAILED =
+    'Could not load the current value. Close this dialog and try again.';
+
 const HIDDEN_VALUE_HINT =
     "You can't view this value. Leave it empty to keep it, or enter a new value to replace it.";
 
@@ -93,6 +96,9 @@ export const SecretDialog: React.FC<SecretDialogProps> = ({
     const classes = useStyles();
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    // Saving without the current value would overwrite the secret, so a
+    // failed load blocks the save
+    const [valueLoadFailed, setValueLoadFailed] = useState(false);
 
     const [formValues, setFormValues] = useState<FormState>(EMPTY_FORM);
 
@@ -105,14 +111,19 @@ export const SecretDialog: React.FC<SecretDialogProps> = ({
             setIsLoading(true);
             fetchSecretValue(secret.id, secret.secretKey).then((secretResponse) => {
                 if (!secretResponse) {
-                    setError('Secret not found');
+                    setValueLoadFailed(true);
+                    setError(VALUE_LOAD_FAILED);
                     return;
                 }
-                setFormValues({
-                    secretKey: secretResponse.secretKey,
-                    secretValue: secretResponse.secretValue,
-                    secretComment: secretResponse.secretComment || '',
-                });
+                // Only the value is filled in, and only while the field is
+                // still empty. This also runs when the value read permission
+                // resolves with the dialog already open, and must not
+                // overwrite what the user typed in the meantime.
+                setFormValues(prev => ({
+                    ...prev,
+                    secretValue:
+                        prev.secretValue === '' ? secretResponse.secretValue : prev.secretValue,
+                }));
             }).finally(() => {
                 setIsLoading(false);
             });
@@ -130,8 +141,11 @@ export const SecretDialog: React.FC<SecretDialogProps> = ({
         if (secret && (mode === 'edit' || mode === 'view')) {
             setFormValues({
                 secretKey: secret.secretKey,
-                // Whatever the listing carries is a placeholder, not the value
-                secretValue: valueHidden ? '' : secret.secretValue,
+                // Whatever the listing carries for a hidden value is a
+                // placeholder. It must never reach the form, or saving would
+                // store it as the value. The effect above loads the real one.
+                secretValue:
+                    valueHidden || secret.secretValue === HIDDEN_VALUE ? '' : secret.secretValue,
                 secretComment: secret.secretComment || '',
             });
         } else if (mode === 'create') {
@@ -139,11 +153,17 @@ export const SecretDialog: React.FC<SecretDialogProps> = ({
         }
 
         setError(null);
+        setValueLoadFailed(false);
         setFormErrors({
             secretKey: false,
             secretValue: false,
         });
-    }, [secret, mode, open, valueHidden]);
+        // `valueHidden` is left out on purpose: it changes when the value read
+        // permission check resolves, and resetting then would wipe what the
+        // user already typed. The form only resets when the dialog opens or
+        // the secret changes.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [secret, mode, open]);
 
     const keepsCurrentValue = valueHidden && formValues.secretValue.trim() === '';
 
@@ -288,7 +308,7 @@ export const SecretDialog: React.FC<SecretDialogProps> = ({
                         onClick={handleSubmit}
                         color="primary"
                         variant="contained"
-                        disabled={!isValid || isLoading}
+                        disabled={!isValid || isLoading || valueLoadFailed}
                         data-testid="save-secret-button"
                     >
                         {isLoading ? 'Saving...' : 'Save'}

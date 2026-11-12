@@ -1,6 +1,4 @@
 import {
-  AuthService,
-  BackstageCredentials,
   HttpAuthService,
   LoggerService,
   PermissionsService,
@@ -8,16 +6,17 @@ import {
 import express from 'express';
 import Router from 'express-promise-router';
 import { Config } from '@backstage/config';
-import { InputError, NotAllowedError } from '@backstage/errors';
+import { InputError } from '@backstage/errors';
 import {
   AuthorizeResult,
   ResourcePermission,
 } from '@backstage/plugin-permission-common';
 import { CatalogService } from '@backstage/plugin-catalog-node';
 import {
+  INFISICAL_FORBIDDEN_REASONS,
   infisicalSecretCreatePermission,
   infisicalSecretDeletePermission,
-  infisicalSecretReadPermission,
+  infisicalSecretDescribePermission,
   infisicalSecretUpdatePermission,
   infisicalSecretValueReadPermission,
 } from '@infisical/backstage-plugin-infisical-common';
@@ -26,6 +25,7 @@ import {
   resolveEntityAccess,
   validateEntityRef,
 } from './entityAccess';
+import { forbiddenError } from './errors';
 import { InfisicalIdentityRegistry } from './identities';
 import {
   InfisicalSecret,
@@ -47,8 +47,6 @@ export interface RouterOptions {
   config: Config;
   /** Used to extract the caller's credentials */
   httpAuth: HttpAuthService;
-  /** Used to identify the caller for the Infisical audit log */
-  auth: AuthService;
   /** Used to authorize the caller against the entity */
   permissions: PermissionsService;
   /** Used to look up entities and their Infisical annotations */
@@ -161,7 +159,7 @@ function secretPayload(
 export async function createRouter(
   options: RouterOptions,
 ): Promise<express.Router> {
-  const { logger, config, httpAuth, auth, permissions, catalog } = options;
+  const { logger, config, httpAuth, permissions, catalog } = options;
   const router = Router();
 
   router.use(express.json());
@@ -169,27 +167,18 @@ export async function createRouter(
   const identities = new InfisicalIdentityRegistry({ config, logger });
 
   /**
-   * Describes the caller for the Infisical audit log, e.g. `user:default/jane`.
-   */
-  function principalRef(credentials: BackstageCredentials): string {
-    if (auth.isPrincipal(credentials, 'user')) {
-      return credentials.principal.userEntityRef;
-    }
-    if (auth.isPrincipal(credentials, 'service')) {
-      return `service:${credentials.principal.subject}`;
-    }
-    return 'anonymous';
-  }
-
-  /**
    * Runs the checks every route shares, always in this order:
    *
    * 1. Validates the entity reference (400).
-   * 2. Loads the entity as the caller and resolves the Infisical project,
+   * 2. Requires user credentials (401/403). Service credentials are rejected
+   *    because the permission framework allows them without consulting the
+   *    policy, which would let any backend plugin or external access token
+   *    read and write every secret.
+   * 3. Loads the entity as the caller and resolves the Infisical project,
    *    environment, path and identity from its annotations (404/403/400).
-   * 3. Authorizes `permission` against the entity (403). `optional`
+   * 4. Authorizes `permission` against the entity (403). `optional`
    *    permissions are evaluated in the same round trip and returned.
-   * 4. Picks the client for the entity's machine identity (404/403). This
+   * 5. Picks the client for the entity's machine identity (404/403). This
    *    runs only after the permission check so that callers without
    *    permission learn nothing about the identity configuration.
    */
@@ -203,7 +192,9 @@ export async function createRouter(
     } = {},
   ) {
     const entityRef = validateEntityRef(input.entityRef);
-    const credentials = await httpAuth.credentials(request);
+    const credentials = await httpAuth.credentials(request, {
+      allow: ['user'],
+    });
     const access = await resolveEntityAccess({
       catalog,
       credentials,
@@ -225,7 +216,8 @@ export async function createRouter(
       (_, index) => decisions[index]?.result === AuthorizeResult.ALLOW,
     );
     if (!allowed) {
-      throw new NotAllowedError(
+      throw forbiddenError(
+        INFISICAL_FORBIDDEN_REASONS.permissionDenied,
         `Not allowed to perform '${permission.name}' on '${entityRef}'`,
       );
     }
@@ -233,7 +225,7 @@ export async function createRouter(
     return {
       access,
       api: identities.getClient(access.identity, entityRef),
-      context: { userRef: principalRef(credentials), entityRef },
+      context: { userRef: credentials.principal.userEntityRef, entityRef },
       optionalAllowed,
     };
   }
@@ -246,7 +238,7 @@ export async function createRouter(
    *   path - The secret path (optional, subject to the entity's secretPath annotation)
    *   environment - The environment slug (optional, subject to the entity's environment annotation)
    *
-   * Requires `infisical.secret.read`. Secret values are only included when
+   * Requires `infisical.secret.describe`. Secret values are only included when
    * `infisical.secret.value.read` is also allowed.
    */
   router.get('/secrets', async (request, response) => {
@@ -258,7 +250,7 @@ export async function createRouter(
     } = await entityScoped(
       request,
       queryInput(request),
-      infisicalSecretReadPermission,
+      infisicalSecretDescribePermission,
       { optional: [infisicalSecretValueReadPermission] },
     );
 
@@ -313,14 +305,14 @@ export async function createRouter(
    * Query parameters:
    *   entityRef - The catalog entity reference (required)
    *
-   * Requires `infisical.secret.read`. When the entity is locked to an
+   * Requires `infisical.secret.describe`. When the entity is locked to an
    * environment only that environment is returned.
    */
   router.get('/environments', async (request, response) => {
     const { access, api, context } = await entityScoped(
       request,
       { entityRef: request.query.entityRef },
-      infisicalSecretReadPermission,
+      infisicalSecretDescribePermission,
     );
 
     const project = await api.getEnvironments(access.workspaceId, context);

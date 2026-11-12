@@ -172,6 +172,130 @@ describe('SecretDialog', () => {
     expect(fetchSecretValue).toHaveBeenCalledWith('secret-id', 'API_KEY');
   });
 
+  describe('when the value hidden by Infisical cannot be loaded', () => {
+    const hiddenSecret = { ...mockSecret, secretValue: '<hidden-by-infisical>' };
+
+    it('never shows the placeholder as the value', () => {
+      render(
+        <SecretDialog
+          open
+          mode="edit"
+          secret={hiddenSecret}
+          onClose={mockOnClose}
+          onSave={mockOnSave}
+          fetchSecretValue={jest.fn().mockReturnValue(new Promise(() => {}))}
+        />
+      );
+
+      expect(screen.getByLabelText('Secret value')).toHaveValue('');
+    });
+
+    it('blocks saving, so the placeholder cannot overwrite the secret', async () => {
+      // The parent resolves with null when the request fails
+      const fetchSecretValue = jest.fn().mockResolvedValue(null);
+
+      render(
+        <SecretDialog
+          open
+          mode="edit"
+          secret={hiddenSecret}
+          onClose={mockOnClose}
+          onSave={mockOnSave}
+          fetchSecretValue={fetchSecretValue}
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText(/Could not load the current value/)).toBeInTheDocument();
+      });
+      expect(screen.getByLabelText('Secret value')).toHaveValue('');
+
+      fireEvent.change(screen.getByLabelText('Secret comment'), { target: { value: 'Updated comment' } });
+
+      const save = screen.getByTestId('save-secret-button');
+      expect(save).toBeDisabled();
+      fireEvent.click(save);
+      expect(mockOnSave).not.toHaveBeenCalled();
+    });
+
+    it('allows saving again after the dialog is reopened and the value loads', async () => {
+      const fetchSecretValue = jest.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(mockSecret);
+      const dialog = (open: boolean) => (
+        <SecretDialog
+          open={open}
+          mode="edit"
+          secret={hiddenSecret}
+          onClose={mockOnClose}
+          onSave={mockOnSave}
+          fetchSecretValue={fetchSecretValue}
+        />
+      );
+
+      const { rerender } = render(dialog(true));
+      await waitFor(() => {
+        expect(screen.getByTestId('save-secret-button')).toBeDisabled();
+      });
+
+      rerender(dialog(false));
+      rerender(dialog(true));
+
+      await waitFor(() => {
+        expect(screen.getByDisplayValue('test-api-key')).toBeInTheDocument();
+      });
+      expect(screen.getByTestId('save-secret-button')).toBeEnabled();
+    });
+  });
+
+  describe('when the value read permission resolves with the dialog open', () => {
+    // While the permission check is loading the frontend treats values as
+    // unreadable, although the listing already carries Infisical's placeholder
+    const hiddenSecret = { ...mockSecret, secretValue: '<hidden-by-infisical>' };
+    const dialog = (canReadValue: boolean, fetchSecretValue: jest.Mock) => (
+      <SecretDialog
+        open
+        mode="edit"
+        secret={hiddenSecret}
+        onClose={mockOnClose}
+        onSave={mockOnSave}
+        fetchSecretValue={fetchSecretValue}
+        canReadValue={canReadValue}
+      />
+    );
+
+    it('keeps what the user typed and loads the value', async () => {
+      const fetchSecretValue = jest.fn().mockResolvedValue(mockSecret);
+      const { rerender } = render(dialog(false, fetchSecretValue));
+
+      fireEvent.change(screen.getByLabelText('Secret key'), { target: { value: 'RENAMED_KEY' } });
+      fireEvent.change(screen.getByLabelText('Secret comment'), { target: { value: 'Updated comment' } });
+
+      rerender(dialog(true, fetchSecretValue));
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Secret value')).toHaveValue('test-api-key');
+      });
+      expect(screen.getByLabelText('Secret key')).toHaveValue('RENAMED_KEY');
+      expect(screen.getByLabelText('Secret comment')).toHaveValue('Updated comment');
+    });
+
+    it('does not replace a value the user already typed', async () => {
+      const fetchSecretValue = jest.fn().mockResolvedValue(mockSecret);
+      const { rerender } = render(dialog(false, fetchSecretValue));
+
+      fireEvent.change(screen.getByLabelText('Secret value'), { target: { value: 'typed-value' } });
+
+      rerender(dialog(true, fetchSecretValue));
+
+      await waitFor(() => {
+        expect(fetchSecretValue).toHaveBeenCalledTimes(1);
+      });
+      await waitFor(() => {
+        expect(screen.getByLabelText('Secret value')).toBeEnabled();
+      });
+      expect(screen.getByLabelText('Secret value')).toHaveValue('typed-value');
+    });
+  });
+
   describe('when values cannot be read', () => {
     // The backend redacts listed values to '' without value.read
     const redactedSecret = { ...mockSecret, value: '', secretValue: '' };

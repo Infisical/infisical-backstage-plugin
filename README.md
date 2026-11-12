@@ -102,7 +102,7 @@ Each request to Infisical is made as the selected machine identity, so the actor
 backstage-plugin-infisical (user=user:default/jane; entity=component:default/payments-service)
 ```
 
-Requests made by other backend plugins show `user=service:<subject>`. The User-Agent is informational and set by your Backstage backend, so treat it as a tracing aid rather than proof of identity.
+The backend only accepts user credentials: requests made with service credentials (another backend plugin or an external access token) are rejected with `403`, because the permission framework allows service principals without consulting your policy. The User-Agent is informational and set by your Backstage backend, so treat it as a tracing aid rather than proof of identity.
 
 Add the plugin to your backend in `packages/backend/src/index.ts`:
 
@@ -223,21 +223,32 @@ All permissions use the `catalog-entity` resource type with the entity the secre
 
 | Permission | Action | Gates |
 |---|---|---|
-| `infisical.secret.read` | `read` | Listing secrets, folders and environments (`GET /secrets`, `GET /environments`) |
-| `infisical.secret.value.read` | `read` | Revealing secret values (`GET /secrets/:secretId`). Without it, values are redacted from listings |
+| `infisical.secret.describe` | `read` | Listing secrets, folders and environments (`GET /secrets`, `GET /environments`) |
+| `infisical.secret.value.read` | none | Revealing secret values (`GET /secrets/:secretId`). Without it, values are redacted from listings |
 | `infisical.secret.create` | `create` | Creating secrets (`POST /secrets`) |
 | `infisical.secret.update` | `update` | Updating secrets (`PATCH /secrets/:secretId`). Without `infisical.secret.value.read`, users can still rename a secret or change its comment: the edit dialog hides the value and keeps it unless a new one is entered, and the value is redacted from the update response |
 | `infisical.secret.delete` | `delete` | Deleting secrets (`DELETE /secrets/:secretId`) |
 
+`infisical.secret.value.read` deliberately has no action attribute. A policy or role that allows every `read` on catalog entities therefore does not reveal secret values: the permission has to be granted by name.
+
 The backend also enforces the entity annotations server-side, independently of the policy:
 
 - The Infisical project is always taken from `infisical/projectId`; requests cannot pick another project.
-- When `infisical/environment` is set, requests for any other environment are rejected with `403`.
+- When `infisical/environment` is set, requests for any other environment are rejected with `403`. The requested environment is trimmed before it is compared and before the `infisical/identity.<environment>` annotation is looked up.
 - When `infisical/secretPath` is set without the `+` prefix, only that exact path is accessible. With the `+` prefix, that path and its subfolders are accessible. Path traversal attempts are rejected with `400`.
 - Requests for an entity that does not exist or has no `infisical/projectId` annotation return `404`.
 - Requests for an entity whose `infisical/identity` annotations name an identity that is not configured return `404`; identities with `allowedEntityRefs` reject other entities with `403`. These checks run after the permission check.
 - Secret keys and project IDs are sent to Infisical as a single encoded URL path segment. A secret key of `.` or `..`, or an `environment` in a request body that is not a string, is rejected with `400`.
 - Errors returned by Infisical keep their meaning: `400`/`422` become `400`, and `403`, `404` and `409` are passed through (a `403` here means the machine identity lacks access in Infisical, for example because it is not a member of the project). Rate limiting, timeouts and `5xx` responses become `503`. A `401` from Infisical means the configured machine identity credentials are invalid and is reported as `500`.
+- Every `403` carries its cause as `error.reason` in the response body, which the frontend uses to tell a missing permission apart from a configuration problem:
+
+  | `error.reason` | Cause |
+  |---|---|
+  | `permission-denied` | The permission policy denied the operation |
+  | `entity-restriction` | The environment or path is outside what the entity's annotations allow |
+  | `identity-not-allowed` | The entity is not in the `allowedEntityRefs` of its machine identity |
+  | `infisical-forbidden` | Infisical denied the machine identity |
+
 - Only reads are retried (up to three times) on network errors and `408`/`429`/`5xx` responses. Writes are retried only on `429`, and other errors are never retried.
 
 Make sure the permission framework is enabled in `app-config.yaml`:
@@ -260,18 +271,18 @@ permission:
       - infisical-backend
 ```
 
-**Grant catalog access by permission name, not by resource type.** RBAC treats a resource-type grant as covering every permission that shares that resource type and action. Because the Infisical permissions use the `catalog-entity` resource type, a role holding `catalog-entity, read, allow` is also allowed `infisical.secret.read` and `infisical.secret.value.read`, which lets its members reveal secret values without ever being granted that permission. Use the named catalog permission instead and grant the Infisical permissions explicitly:
+**Grant catalog access by permission name, not by resource type.** RBAC treats a resource-type grant as covering every permission that shares that resource type and action. Because the Infisical permissions use the `catalog-entity` resource type, a role holding `catalog-entity, read, allow` is also allowed `infisical.secret.describe`, and `catalog-entity, update, allow` also covers `infisical.secret.update`, without ever being granted those permissions. Use the named catalog permission instead and grant the Infisical permissions explicitly. `infisical.secret.value.read` has no action, which RBAC writes as `use`, so a `read` grant on the resource type does not cover it:
 
 ```csv
 p, role:default/everyone, catalog.entity.read, read, allow
-p, role:default/everyone, infisical.secret.read, read, allow
-p, role:default/secret-editors, infisical.secret.value.read, read, allow
+p, role:default/everyone, infisical.secret.describe, read, allow
+p, role:default/secret-editors, infisical.secret.value.read, use, allow
 p, role:default/secret-editors, infisical.secret.create, create, allow
 p, role:default/secret-editors, infisical.secret.update, update, allow
 p, role:default/secret-editors, infisical.secret.delete, delete, allow
 ```
 
-Note that the built-in RBAC admin role holds `catalog-entity, read`, so RBAC administrators can always reveal values.
+Note that the built-in RBAC admin role holds `catalog-entity, read`, so RBAC administrators can always list secrets. That grant does not let them reveal values.
 
 ### Example policy
 
@@ -298,7 +309,7 @@ import {
 import {
   infisicalSecretCreatePermission,
   infisicalSecretDeletePermission,
-  infisicalSecretReadPermission,
+  infisicalSecretDescribePermission,
   infisicalSecretUpdatePermission,
   infisicalSecretValueReadPermission,
 } from '@infisical/backstage-plugin-infisical-common';
@@ -316,7 +327,7 @@ class InfisicalPermissionPolicy implements PermissionPolicy {
     user?: PolicyQueryUser,
   ): Promise<PolicyDecision> {
     // Everyone can list secrets, folders and environments
-    if (isPermission(request.permission, infisicalSecretReadPermission)) {
+    if (isPermission(request.permission, infisicalSecretDescribePermission)) {
       return { result: AuthorizeResult.ALLOW };
     }
 

@@ -56,6 +56,31 @@ describe('InfisicalClient', () => {
 
       await expect(client.getWorkspaces()).rejects.toThrow();
     });
+
+    it('keeps the error name and reason of a Backstage error response', async () => {
+      mockFetchApi.fetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            error: {
+              name: 'NotAllowedError',
+              message: "Entity 'component:default/a' is not allowed to use Infisical identity 'b'",
+              reason: 'identity-not-allowed',
+            },
+            response: { statusCode: 403 },
+          }),
+          { status: 403, headers: { 'Content-Type': 'application/json' } },
+        ),
+      );
+
+      await expect(client.getWorkspaces()).rejects.toMatchObject({
+        message:
+          "Entity 'component:default/a' is not allowed to use Infisical identity 'b'",
+        response: { status: 403 },
+        body: {
+          error: { name: 'NotAllowedError', reason: 'identity-not-allowed' },
+        },
+      });
+    });
   });
 
   describe('getEnvironments', () => {

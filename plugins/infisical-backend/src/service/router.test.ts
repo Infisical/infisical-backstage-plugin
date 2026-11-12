@@ -18,7 +18,7 @@ import {
 import {
   infisicalSecretCreatePermission,
   infisicalSecretDeletePermission,
-  infisicalSecretReadPermission,
+  infisicalSecretDescribePermission,
   infisicalSecretUpdatePermission,
   infisicalSecretValueReadPermission,
 } from '@infisical/backstage-plugin-infisical-common';
@@ -144,7 +144,6 @@ describe('infisical router', () => {
         },
       }),
       httpAuth: mockServices.httpAuth(),
-      auth: mockServices.auth(),
       permissions,
       catalog: { getEntityByRef } as unknown as CatalogService,
     });
@@ -230,14 +229,14 @@ describe('infisical router', () => {
       );
     });
 
-    it('authorizes read and value.read against the entity in one call', async () => {
+    it('authorizes describe and value.read against the entity in one call', async () => {
       await request(app).get(`/secrets?entityRef=${ENTITY_REF}`);
 
       expect(permissions.authorize).toHaveBeenCalledTimes(1);
       expect(permissions.authorize).toHaveBeenCalledWith(
         [
           {
-            permission: infisicalSecretReadPermission,
+            permission: infisicalSecretDescribePermission,
             resourceRef: ENTITY_REF,
           },
           {
@@ -249,7 +248,7 @@ describe('infisical router', () => {
       );
     });
 
-    it('returns 403 when read is denied', async () => {
+    it('returns 403 when describe is denied', async () => {
       denyAll();
 
       const response = await request(app).get(
@@ -257,11 +256,12 @@ describe('infisical router', () => {
       );
 
       expect(response.status).toBe(403);
+      expect(response.body.error.reason).toBe('permission-denied');
       expect(mockInfisicalApi.getSecrets).not.toHaveBeenCalled();
     });
 
     it('redacts values when value.read is denied', async () => {
-      allowOnly(infisicalSecretReadPermission.name);
+      allowOnly(infisicalSecretDescribePermission.name);
 
       const response = await request(app).get(
         `/secrets?entityRef=${ENTITY_REF}`,
@@ -325,6 +325,7 @@ describe('infisical router', () => {
       );
 
       expect(response.status).toBe(403);
+      expect(response.body.error.reason).toBe('entity-restriction');
       expect(mockInfisicalApi.getSecrets).not.toHaveBeenCalled();
     });
 
@@ -498,8 +499,8 @@ describe('infisical router', () => {
       );
     });
 
-    it('returns 403 when only read is allowed', async () => {
-      allowOnly(infisicalSecretReadPermission.name);
+    it('returns 403 when only describe is allowed', async () => {
+      allowOnly(infisicalSecretDescribePermission.name);
 
       const response = await request(app).get(
         `/secrets/API_KEY?entityRef=${ENTITY_REF}`,
@@ -525,7 +526,7 @@ describe('infisical router', () => {
       expect(permissions.authorize).toHaveBeenCalledWith(
         [
           {
-            permission: infisicalSecretReadPermission,
+            permission: infisicalSecretDescribePermission,
             resourceRef: ENTITY_REF,
           },
         ],
@@ -591,7 +592,7 @@ describe('infisical router', () => {
     });
 
     it('returns 403 when create is denied', async () => {
-      allowOnly(infisicalSecretReadPermission.name);
+      allowOnly(infisicalSecretDescribePermission.name);
 
       const response = await request(app).post('/secrets').send(secretData);
 
@@ -730,7 +731,7 @@ describe('infisical router', () => {
     });
 
     it('returns 403 when update is denied', async () => {
-      allowOnly(infisicalSecretReadPermission.name);
+      allowOnly(infisicalSecretDescribePermission.name);
 
       const response = await request(app)
         .patch('/secrets/secret1')
@@ -829,7 +830,7 @@ describe('infisical router', () => {
 
     it('returns 403 when delete is denied', async () => {
       allowOnly(
-        infisicalSecretReadPermission.name,
+        infisicalSecretDescribePermission.name,
         infisicalSecretUpdatePermission.name,
       );
 
@@ -965,6 +966,20 @@ describe('infisical router', () => {
         ).not.toHaveBeenCalled();
       });
 
+      it('trims the requested environment before picking the identity', async () => {
+        const response = await request(app).get(
+          `/secrets?entityRef=${ENTITY_REF}&environment=%20prod%20`,
+        );
+
+        expect(response.status).toBe(200);
+        expect(
+          mockIdentityApis['payments-prod'].getSecrets,
+        ).toHaveBeenCalledWith(WORKSPACE_ID, undefined, 'prod', CONTEXT);
+        expect(
+          mockIdentityApis['payments-dev'].getSecrets,
+        ).not.toHaveBeenCalled();
+      });
+
       it('uses the default annotation for other environments', async () => {
         const response = await request(app).post('/secrets').send({
           entityRef: ENTITY_REF,
@@ -1053,6 +1068,7 @@ describe('infisical router', () => {
       );
 
       expect(response.status).toBe(403);
+      expect(response.body.error.reason).toBe('identity-not-allowed');
       expect(response.body.error.message).toContain(
         "is not allowed to use Infisical identity 'restricted'",
       );
@@ -1108,21 +1124,37 @@ describe('infisical router', () => {
       );
     });
 
-    it('sends service principals in the audit context', async () => {
+    // The permission framework allows service principals without consulting
+    // the policy, so they must not get past the router
+    it('rejects service principals', async () => {
       const response = await request(app)
         .get(`/secrets?entityRef=${ENTITY_REF}`)
         .set('Authorization', mockCredentials.service.header());
 
-      expect(response.status).toBe(200);
-      expect(mockInfisicalApi.getSecrets).toHaveBeenCalledWith(
-        WORKSPACE_ID,
-        undefined,
-        undefined,
-        {
-          userRef: expect.stringMatching(/^service:.+/),
-          entityRef: ENTITY_REF,
-        },
-      );
+      expect(response.status).toBe(403);
+      expect(getEntityByRef).not.toHaveBeenCalled();
+      expect(permissions.authorize).not.toHaveBeenCalled();
+      expectNoInfisicalCalls();
+    });
+
+    it('rejects service principals on writes', async () => {
+      const response = await request(app)
+        .delete('/secrets/API_KEY')
+        .set('Authorization', mockCredentials.service.header())
+        .send({ entityRef: ENTITY_REF, environment: 'dev' });
+
+      expect(response.status).toBe(403);
+      expectNoInfisicalCalls();
+    });
+
+    it('rejects unauthenticated requests', async () => {
+      const response = await request(app)
+        .get(`/secrets?entityRef=${ENTITY_REF}`)
+        .set('Authorization', mockCredentials.none.header());
+
+      expect(response.status).toBe(401);
+      expect(getEntityByRef).not.toHaveBeenCalled();
+      expectNoInfisicalCalls();
     });
   });
 
@@ -1144,7 +1176,6 @@ describe('infisical router', () => {
           },
         }),
         httpAuth: mockServices.httpAuth(),
-        auth: mockServices.auth(),
         permissions,
         catalog: { getEntityByRef } as unknown as CatalogService,
       });

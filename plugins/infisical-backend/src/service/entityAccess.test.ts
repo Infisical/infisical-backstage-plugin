@@ -91,6 +91,22 @@ describe('resolveEnvironment', () => {
       NotAllowedError,
     );
   });
+
+  it('trims the requested environment', () => {
+    expect(resolveEnvironment(undefined, ' prod ')).toBe('prod');
+    expect(resolveEnvironment(undefined, '  ')).toBeUndefined();
+    expect(resolveEnvironment('staging', ' staging')).toBe('staging');
+    expect(resolveEnvironment('staging', '  ')).toBe('staging');
+    expect(() => resolveEnvironment('staging', ' production ')).toThrow(
+      NotAllowedError,
+    );
+  });
+
+  it('marks a rejected environment as an entity restriction', () => {
+    expect(() => resolveEnvironment('staging', 'production')).toThrow(
+      expect.objectContaining({ reason: 'entity-restriction' }),
+    );
+  });
 });
 
 describe('validateEntityRef', () => {
@@ -234,6 +250,30 @@ describe('resolveEntityAccess', () => {
         requestedEnvironment: 'dev',
       }),
     ).resolves.toMatchObject({ environment: 'dev', identity: 'team-a' });
+  });
+
+  it('does not let a padded environment miss its identity override', async () => {
+    getEntityByRef.mockResolvedValue({
+      apiVersion: 'backstage.io/v1alpha1',
+      kind: 'Component',
+      metadata: {
+        name: 'foo',
+        annotations: {
+          'infisical/projectId': 'project-1',
+          'infisical/identity': 'team-a',
+          'infisical/identity.prod': 'team-a-prod',
+        },
+      },
+    });
+
+    await expect(
+      resolveEntityAccess({
+        catalog,
+        credentials,
+        entityRef: 'component:default/foo',
+        requestedEnvironment: ' prod',
+      }),
+    ).resolves.toMatchObject({ environment: 'prod', identity: 'team-a-prod' });
   });
 
   it('throws NotFoundError when the entity does not exist', async () => {

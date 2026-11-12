@@ -43,13 +43,19 @@ function allowAllExcept(...denied: PermissionName[]) {
 }
 
 /** Builds a ResponseError with the given status, as thrown by InfisicalClient */
-async function responseError(status: number): Promise<ResponseError> {
-    return ResponseError.fromResponse(
-        new Response(JSON.stringify({ error: { name: 'Error', message: 'nope' }, response: { statusCode: status } }), {
+async function responseError(
+    status: number,
+    error: { message?: string; reason?: string } = {},
+): Promise<ResponseError> {
+    const response = await ResponseError.fromResponse(
+        new Response(JSON.stringify({ error: { name: 'Error', message: 'nope', ...error }, response: { statusCode: status } }), {
             status,
             headers: { 'Content-Type': 'application/json' },
         }),
     );
+    // InfisicalClient replaces the message with the one from the body
+    response.message = error.message ?? response.message;
+    return response;
 }
 
 // Mock the Progress, ErrorPanel, EmptyState and Table components
@@ -536,6 +542,112 @@ describe('EntityInfisicalSecretsContent', () => {
 
         await waitFor(() => {
             expect(screen.getByTestId('error-panel')).toBeInTheDocument();
+        });
+    });
+
+    describe('when listing secrets fails for one environment', () => {
+        /** Picks another environment in the selector */
+        const selectEnvironment = (from: string, to: string) => {
+            fireEvent.mouseDown(screen.getByText(from));
+            fireEvent.click(screen.getByRole('option', { name: to }));
+        };
+
+        it.each([
+            [403, "You don't have permission to view these secrets"],
+            [500, 'Request failed with 500 Internal Server Error'],
+        ])('keeps the environment selector after a %i so another one can be picked', async (status, message) => {
+            mockInfisicalApi.getSecrets.mockRejectedValueOnce(await responseError(status));
+
+            renderContent();
+
+            await waitFor(() => {
+                expect(screen.getByText(message)).toBeInTheDocument();
+            });
+            // The selector is still there, the listing controls are not
+            expect(screen.getByText('Development')).toBeInTheDocument();
+            expect(screen.queryByLabelText('filter secrets')).not.toBeInTheDocument();
+            expect(screen.queryByText('ADD SECRET')).not.toBeInTheDocument();
+
+            selectEnvironment('Development', 'Staging');
+
+            await waitFor(() => {
+                expect(screen.getByTestId('secrets-table')).toBeInTheDocument();
+            });
+            expect(mockInfisicalApi.getSecrets).toHaveBeenLastCalledWith(
+                mockEntityRef,
+                expect.objectContaining({ environment: 'staging' }),
+            );
+            expect(screen.queryByText(message)).not.toBeInTheDocument();
+            expect(screen.getByText('ADD SECRET')).toBeInTheDocument();
+        });
+    });
+
+    describe('403 reasons', () => {
+        it.each([
+            [
+                'identity-not-allowed',
+                "Entity 'component:default/test-component' is not allowed to use Infisical identity 'payments'",
+            ],
+            ['infisical-forbidden', 'Infisical API error (403): not a project member'],
+        ])('reports %s as a configuration problem', async (reason, message) => {
+            mockInfisicalApi.getSecrets.mockRejectedValueOnce(await responseError(403, { reason, message }));
+
+            renderContent();
+
+            await waitFor(() => {
+                expect(
+                    screen.getByText('Infisical access is not set up correctly for this entity'),
+                ).toBeInTheDocument();
+            });
+            expect(
+                screen.getByText(`${message}. Ask your Backstage administrator to check the Infisical configuration.`),
+            ).toBeInTheDocument();
+            expect(
+                screen.queryByText("You don't have permission to view these secrets"),
+            ).not.toBeInTheDocument();
+        });
+
+        it('reports an entity restriction with the message of the backend', async () => {
+            const message = "Access to environment 'development' is not allowed for this entity";
+            mockInfisicalApi.getSecrets.mockRejectedValueOnce(
+                await responseError(403, { reason: 'entity-restriction', message }),
+            );
+
+            renderContent();
+
+            await waitFor(() => {
+                expect(screen.getByText("This entity can't access these secrets")).toBeInTheDocument();
+            });
+            expect(screen.getByText(message)).toBeInTheDocument();
+        });
+
+        it('reports a denied permission as a permission problem', async () => {
+            mockInfisicalApi.getSecrets.mockRejectedValueOnce(
+                await responseError(403, { reason: 'permission-denied', message: 'Not allowed' }),
+            );
+
+            renderContent();
+
+            await waitFor(() => {
+                expect(
+                    screen.getByText("You don't have permission to view these secrets"),
+                ).toBeInTheDocument();
+            });
+        });
+
+        it('tells the causes apart when listing environments is forbidden', async () => {
+            mockInfisicalApi.getEnvironments.mockRejectedValueOnce(
+                await responseError(403, { reason: 'infisical-forbidden', message: 'Infisical API error (403): nope' }),
+            );
+
+            renderContent();
+
+            await waitFor(() => {
+                expect(
+                    screen.getByText('Infisical access is not set up correctly for this entity'),
+                ).toBeInTheDocument();
+            });
+            expect(mockInfisicalApi.getSecrets).not.toHaveBeenCalled();
         });
     });
 });
