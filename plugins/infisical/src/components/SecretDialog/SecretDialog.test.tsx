@@ -3,7 +3,7 @@
  */
 
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { SecretDialog } from './SecretDialog';
 import { InfisicalSecret } from '../../api/types';
 
@@ -242,6 +242,108 @@ describe('SecretDialog', () => {
       await waitFor(() => {
         expect(screen.getByDisplayValue('test-api-key')).toBeInTheDocument();
       });
+      expect(screen.getByTestId('save-secret-button')).toBeEnabled();
+    });
+  });
+
+  describe('when a value request outlives its dialog', () => {
+    const secretA = { ...mockSecret, id: 'a', secretKey: 'KEY_A', secretValue: '<hidden-by-infisical>' };
+    const secretB = { ...mockSecret, id: 'b', secretKey: 'KEY_B', secretValue: '<hidden-by-infisical>' };
+
+    /** A fetchSecretValue whose requests are resolved by the test, per secret id */
+    const deferredFetch = () => {
+      const resolvers: Record<string, (secret: InfisicalSecret | null) => void> = {};
+      const fetchSecretValue = jest.fn(
+        (id: string) =>
+          new Promise<InfisicalSecret | null>(resolve => {
+            resolvers[id] = resolve;
+          }),
+      );
+      return { fetchSecretValue, resolvers };
+    };
+
+    const dialog = (
+      open: boolean,
+      secret: InfisicalSecret,
+      fetchSecretValue: jest.Mock,
+    ) => (
+      <SecretDialog
+        open={open}
+        mode="edit"
+        secret={secret}
+        onClose={mockOnClose}
+        onSave={mockOnSave}
+        fetchSecretValue={fetchSecretValue}
+      />
+    );
+
+    it("does not put the previous secret's value into the next secret's form", async () => {
+      const { fetchSecretValue, resolvers } = deferredFetch();
+
+      // Open A, close it before its value arrives, then open B
+      const { rerender } = render(dialog(true, secretA, fetchSecretValue));
+      rerender(dialog(false, secretA, fetchSecretValue));
+      rerender(dialog(true, secretB, fetchSecretValue));
+      expect(fetchSecretValue).toHaveBeenCalledTimes(2);
+
+      // A's response arrives first
+      await act(async () => {
+        resolvers.a({ ...secretA, secretValue: 'value-of-a' });
+      });
+
+      expect(screen.getByLabelText('Secret value')).toHaveValue('');
+      // B is still loading, so it cannot be saved yet
+      expect(screen.getByTestId('save-secret-button')).toBeDisabled();
+
+      await act(async () => {
+        resolvers.b({ ...secretB, secretValue: 'value-of-b' });
+      });
+
+      expect(screen.getByLabelText('Secret value')).toHaveValue('value-of-b');
+      expect(screen.getByLabelText('Secret key')).toHaveValue('KEY_B');
+
+      fireEvent.click(screen.getByText('Save'));
+      await waitFor(() => {
+        expect(mockOnSave).toHaveBeenCalledWith(
+          expect.objectContaining({ secretKey: 'KEY_B', secretValue: 'value-of-b' }),
+        );
+      });
+    });
+
+    it("does not block the next secret when the previous secret's request fails", async () => {
+      const { fetchSecretValue, resolvers } = deferredFetch();
+
+      const { rerender } = render(dialog(true, secretA, fetchSecretValue));
+      rerender(dialog(false, secretA, fetchSecretValue));
+      rerender(dialog(true, secretB, fetchSecretValue));
+
+      await act(async () => {
+        resolvers.a(null);
+      });
+      expect(screen.queryByText(/Could not load the current value/)).not.toBeInTheDocument();
+
+      await act(async () => {
+        resolvers.b({ ...secretB, secretValue: 'value-of-b' });
+      });
+      expect(screen.getByTestId('save-secret-button')).toBeEnabled();
+    });
+
+    it('is not left loading when the dialog is reopened to create a secret', async () => {
+      const { fetchSecretValue } = deferredFetch();
+
+      const { rerender } = render(dialog(true, secretA, fetchSecretValue));
+      rerender(dialog(false, secretA, fetchSecretValue));
+      rerender(
+        <SecretDialog
+          open
+          mode="create"
+          onClose={mockOnClose}
+          onSave={mockOnSave}
+          fetchSecretValue={fetchSecretValue}
+        />
+      );
+
+      expect(screen.getByLabelText('Secret key')).toBeEnabled();
       expect(screen.getByTestId('save-secret-button')).toBeEnabled();
     });
   });

@@ -107,27 +107,46 @@ export const SecretDialog: React.FC<SecretDialogProps> = ({
     const valueHidden = mode !== 'create' && !canReadValue;
 
     useEffect(() => {
-        if (open && secret && !valueHidden && secret.secretValue === HIDDEN_VALUE) {
-            setIsLoading(true);
-            fetchSecretValue(secret.id, secret.secretKey).then((secretResponse) => {
-                if (!secretResponse) {
-                    setValueLoadFailed(true);
-                    setError(VALUE_LOAD_FAILED);
-                    return;
-                }
-                // Only the value is filled in, and only while the field is
-                // still empty. This also runs when the value read permission
-                // resolves with the dialog already open, and must not
-                // overwrite what the user typed in the meantime.
-                setFormValues(prev => ({
-                    ...prev,
-                    secretValue:
-                        prev.secretValue === '' ? secretResponse.secretValue : prev.secretValue,
-                }));
-            }).finally(() => {
-                setIsLoading(false);
-            });
+        if (!(open && secret && !valueHidden && secret.secretValue === HIDDEN_VALUE)) {
+            // Nothing to load, e.g. the dialog was closed while a request
+            // was still running
+            setIsLoading(false);
+            return undefined;
         }
+
+        // Set once the dialog is closed or shows another secret. The request
+        // keeps running, and its result must not touch the form by then: it
+        // would put this secret's value into the other secret's form.
+        let stale = false;
+
+        setIsLoading(true);
+        fetchSecretValue(secret.id, secret.secretKey).then((secretResponse) => {
+            if (stale) {
+                return;
+            }
+            if (!secretResponse) {
+                setValueLoadFailed(true);
+                setError(VALUE_LOAD_FAILED);
+                return;
+            }
+            // Only the value is filled in, and only while the field is
+            // still empty. This also runs when the value read permission
+            // resolves with the dialog already open, and must not
+            // overwrite what the user typed in the meantime.
+            setFormValues(prev => ({
+                ...prev,
+                secretValue:
+                    prev.secretValue === '' ? secretResponse.secretValue : prev.secretValue,
+            }));
+        }).finally(() => {
+            if (!stale) {
+                setIsLoading(false);
+            }
+        });
+
+        return () => {
+            stale = true;
+        };
     }, [open, secret, fetchSecretValue, valueHidden]);
 
     // Form validation
