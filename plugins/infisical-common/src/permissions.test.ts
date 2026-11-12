@@ -3,15 +3,19 @@ import {
   infisicalPermissions,
   infisicalSecretCreatePermission,
   infisicalSecretDeletePermission,
-  infisicalSecretReadPermission,
+  infisicalSecretDescribePermission,
   infisicalSecretUpdatePermission,
   infisicalSecretValueReadPermission,
 } from './permissions';
 
 describe('infisical permissions', () => {
   it.each([
-    [infisicalSecretReadPermission, 'infisical.secret.read', 'read'],
-    [infisicalSecretValueReadPermission, 'infisical.secret.value.read', 'read'],
+    [infisicalSecretDescribePermission, 'infisical.secret.describe', 'read'],
+    [
+      infisicalSecretValueReadPermission,
+      'infisical.secret.value.read',
+      undefined,
+    ],
     [infisicalSecretCreatePermission, 'infisical.secret.create', 'create'],
     [infisicalSecretUpdatePermission, 'infisical.secret.update', 'update'],
     [infisicalSecretDeletePermission, 'infisical.secret.delete', 'delete'],
@@ -23,7 +27,7 @@ describe('infisical permissions', () => {
 
   it('exposes all permissions in infisicalPermissions', () => {
     expect(infisicalPermissions.map(p => p.name)).toEqual([
-      'infisical.secret.read',
+      'infisical.secret.describe',
       'infisical.secret.value.read',
       'infisical.secret.create',
       'infisical.secret.update',

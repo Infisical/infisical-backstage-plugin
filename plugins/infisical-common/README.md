@@ -12,8 +12,8 @@ entity the secrets are being accessed through.
 
 | Permission                    | Action   | Gates                                     |
 | ----------------------------- | -------- | ----------------------------------------- |
-| `infisical.secret.read`       | `read`   | Listing secrets, folders and environments |
-| `infisical.secret.value.read` | `read`   | Revealing secret values                   |
+| `infisical.secret.describe`   | `read`   | Listing secrets, folders and environments |
+| `infisical.secret.value.read` | none     | Revealing secret values                   |
 | `infisical.secret.create`     | `create` | Creating secrets                          |
 | `infisical.secret.update`     | `update` | Updating secrets                          |
 | `infisical.secret.delete`     | `delete` | Deleting secrets                          |
