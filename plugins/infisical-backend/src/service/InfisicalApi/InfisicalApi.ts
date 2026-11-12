@@ -1,6 +1,5 @@
 import {
   NotFoundError,
-  NotAllowedError,
   ConflictError,
   InputError,
   ServiceUnavailableError,
@@ -18,6 +17,17 @@ import {
   InfisicalSecretDeleteRequest,
   AuthTokenResponse
 } from '../types';
+import { INFISICAL_FORBIDDEN_REASONS } from '@infisical/backstage-plugin-infisical-common';
+import { forbiddenError } from '../errors';
+
+/** How long before its expiry an access token is refreshed */
+const TOKEN_EXPIRY_MARGIN_SECONDS = 300;
+
+/**
+ * Share of the lifetime used as the margin instead, for tokens that do not
+ * live longer than {@link TOKEN_EXPIRY_MARGIN_SECONDS}
+ */
+const TOKEN_EXPIRY_MARGIN_RATIO = 0.2;
 
 /**
  * Encodes a value for use as a single URL path segment.
@@ -91,7 +101,7 @@ interface RequestOptions {
  * @public
  */
 export interface InfisicalRequestContext {
-  /** The Backstage principal, e.g. `user:default/jane` or `service:scaffolder` */
+  /** The Backstage user, e.g. `user:default/jane` */
   userRef?: string;
   /** The catalog entity the secrets are accessed through */
   entityRef?: string;
@@ -282,8 +292,16 @@ export class InfisicalApiClient {
 
       const tokenData = (await response.json()) as AuthTokenResponse;
 
-      // Calculate token expiration time with a safety margin (subtract 5 minutes)
-      const expiresInMs = (tokenData.expiresIn - 300) * 1000;
+      // Refresh the token a little before it expires. The margin is 5 minutes,
+      // unless the token does not live longer than that: then the fixed margin
+      // would make it expire on arrival and every request would log in again,
+      // so a share of its lifetime is used instead.
+      const expiresInSeconds = tokenData.expiresIn;
+      const marginSeconds =
+        expiresInSeconds > TOKEN_EXPIRY_MARGIN_SECONDS
+          ? TOKEN_EXPIRY_MARGIN_SECONDS
+          : expiresInSeconds * TOKEN_EXPIRY_MARGIN_RATIO;
+      const expiresInMs = (expiresInSeconds - marginSeconds) * 1000;
 
       this.credentials.accessToken = tokenData.accessToken;
       this.credentials.tokenExpiresAt = Date.now() + expiresInMs;
@@ -388,7 +406,10 @@ export class InfisicalApiClient {
       case 422:
         return new InputError(message);
       case 403:
-        return new NotAllowedError(message);
+        return forbiddenError(
+          INFISICAL_FORBIDDEN_REASONS.infisicalForbidden,
+          message,
+        );
       case 404:
         return new NotFoundError(message);
       case 409:

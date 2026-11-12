@@ -191,6 +191,17 @@ describe('InfisicalApiClient', () => {
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
+    it('marks a 403 from Infisical so it is not mistaken for a missing permission', async () => {
+      fetchMock.mockResolvedValue(errorResponse(403, 'not a project member'));
+
+      await expect(
+        apiClient.getEnvironments('workspace123'),
+      ).rejects.toMatchObject({
+        name: 'NotAllowedError',
+        reason: 'infisical-forbidden',
+      });
+    });
+
     it('retries a read on 5xx and then fails with ServiceUnavailableError', async () => {
       fetchMock.mockResolvedValue(errorResponse(500));
 
@@ -316,6 +327,65 @@ describe('InfisicalApiClient', () => {
         const calls = fetchMock.mock.calls;
         expect(calls.filter(isLogin)).toHaveLength(2);
         expect(calls.filter(call => !isLogin(call))).toHaveLength(2);
+      });
+
+      describe('token expiry margin', () => {
+        const NOW = 1_700_000_000_000;
+        let now: jest.SpyInstance;
+
+        // Logs in with a token that lives `expiresIn` seconds, makes a
+        // request, moves the clock and makes another one
+        async function loginsAfter(expiresIn: number, elapsedSeconds: number) {
+          fetchMock.mockImplementation(async (url: string) =>
+            url.endsWith('/login')
+              ? jsonResponse({ accessToken: 'token', expiresIn })
+              : jsonResponse({ workspace: { environments: [] } }),
+          );
+
+          await apiClient.getEnvironments('workspace123');
+          now.mockReturnValue(NOW + elapsedSeconds * 1000);
+          await apiClient.getEnvironments('workspace123');
+
+          return fetchMock.mock.calls.filter(isLogin).length;
+        }
+
+        beforeEach(() => {
+          // setupTests stubs Date.now, but resetAllMocks clears that stub
+          // between tests
+          now = jest.spyOn(Date, 'now').mockReturnValue(NOW);
+        });
+
+        it('refreshes a long-lived token 5 minutes before it expires', async () => {
+          await expect(loginsAfter(3600, 3299)).resolves.toBe(1);
+        });
+
+        it('logs in again once the 5 minute margin is reached', async () => {
+          await expect(loginsAfter(3600, 3300)).resolves.toBe(2);
+        });
+
+        it.each([
+          [300, 239],
+          [60, 47],
+        ])(
+          'reuses a token that lives %i seconds for 80%% of its lifetime',
+          async (expiresIn, elapsedSeconds) => {
+            await expect(loginsAfter(expiresIn, elapsedSeconds)).resolves.toBe(
+              1,
+            );
+          },
+        );
+
+        it.each([
+          [300, 240],
+          [60, 48],
+        ])(
+          'logs in again when a token that lives %i seconds is 80%% through',
+          async (expiresIn, elapsedSeconds) => {
+            await expect(loginsAfter(expiresIn, elapsedSeconds)).resolves.toBe(
+              2,
+            );
+          },
+        );
       });
 
       it('does not retry a failed login', async () => {
