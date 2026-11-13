@@ -70,12 +70,15 @@ jobs:
         run: npm install -g npm@11.19.1
 
       # Common goes first so the backend and frontend never depend on an unpublished version.
-      # Each step skips a version that is already on npm, so a failed release can be re-run.
-      - name: Publish @infisical/backstage-plugin-infisical-common
-        run: .github/scripts/publish-plugin.sh plugins/infisical-common
-
-      - name: Publish @infisical/backstage-backend-plugin-infisical
-        run: .github/scripts/publish-plugin.sh plugins/infisical-backend
-
-      - name: Publish @infisical/backstage-plugin-infisical
-        run: .github/scripts/publish-plugin.sh plugins/infisical
+      # Versions already on npm are skipped, so a release that failed halfway can be re-run.
+      # Any publish error stops the step before the remaining plugins.
+      - name: Publish NPM
+        run: |
+          for plugin in infisical-common infisical-backend infisical; do
+            name=$(node -p "require('./plugins/$plugin/package.json').name")
+            if [[ -n "$(npm view "$name@$VERSION" version 2>/dev/null)" ]]; then
+              echo "$name@$VERSION is already on npm, skipping"
+            else
+              npm publish "./plugins/$plugin/package.tgz" --access public --tag "$NPM_TAG"
+            fi
+          done
