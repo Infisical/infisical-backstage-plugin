@@ -6,6 +6,8 @@ import React from 'react';
 import { createDevApp } from '@backstage/dev-utils';
 import { TestApiProvider } from '@backstage/test-utils';
 import { Entity } from '@backstage/catalog-model';
+import { permissionApiRef } from '@backstage/plugin-permission-react';
+import { AuthorizeResult } from '@backstage/plugin-permission-common';
 import { Grid } from '@material-ui/core';
 import {
   infisicalPlugin,
@@ -110,12 +112,19 @@ const mockClient = {
   deleteSecret: async () => { }
 };
 
+const mockPermissionApi = {
+  authorize: async () => ({ result: AuthorizeResult.ALLOW as const }),
+};
+
 createDevApp()
   .registerPlugin(infisicalPlugin)
   .addPage({
     element: (
       <TestApiProvider
-        apis={[[infisicalApiRef, mockClient]]}
+        apis={[
+          [infisicalApiRef, mockClient],
+          [permissionApiRef, mockPermissionApi],
+        ]}
       >
         <Grid container spacing={3}>
           <Grid item xs={12}>

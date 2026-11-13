@@ -12,6 +12,51 @@ import { alertApiRef, ErrorApiError, errorApiRef } from '@backstage/core-plugin-
 import { TestApiProvider } from '@backstage/test-utils';
 import { DialogMode } from '../SecretDialog';
 import { TableColumn } from '@backstage/core-components';
+import { ResponseError } from '@backstage/errors';
+import { usePermission } from '@backstage/plugin-permission-react';
+import {
+    infisicalSecretCreatePermission,
+    infisicalSecretDeletePermission,
+    infisicalSecretUpdatePermission,
+    infisicalSecretValueReadPermission,
+} from '@infisical/backstage-plugin-infisical-common';
+
+// Mock the permission hook so each test controls what is allowed
+jest.mock('@backstage/plugin-permission-react', () => ({
+    usePermission: jest.fn(),
+}));
+
+const mockUsePermission = usePermission as jest.MockedFunction<typeof usePermission>;
+
+type PermissionName =
+    | typeof infisicalSecretCreatePermission.name
+    | typeof infisicalSecretUpdatePermission.name
+    | typeof infisicalSecretDeletePermission.name
+    | typeof infisicalSecretValueReadPermission.name;
+
+/** Allows every permission except the ones listed */
+function allowAllExcept(...denied: PermissionName[]) {
+    mockUsePermission.mockImplementation(({ permission }) => ({
+        loading: false,
+        allowed: !denied.includes(permission.name as PermissionName),
+    }));
+}
+
+/** Builds a ResponseError with the given status, as thrown by InfisicalClient */
+async function responseError(
+    status: number,
+    error: { message?: string; reason?: string } = {},
+): Promise<ResponseError> {
+    const response = await ResponseError.fromResponse(
+        new Response(JSON.stringify({ error: { name: 'Error', message: 'nope', ...error }, response: { statusCode: status } }), {
+            status,
+            headers: { 'Content-Type': 'application/json' },
+        }),
+    );
+    // InfisicalClient replaces the message with the one from the body
+    response.message = error.message ?? response.message;
+    return response;
+}
 
 // Mock the Progress, ErrorPanel, EmptyState and Table components
 jest.mock('@backstage/core-components', () => {
@@ -74,9 +119,9 @@ jest.mock('@material-ui/core', () => {
 
 // Mock SecretDialog component
 jest.mock('../SecretDialog', () => ({
-    SecretDialog: ({ open, mode, secret, onClose, onSave }: { open: boolean, mode: DialogMode, secret: InfisicalSecret, onClose: () => void, onSave: (secret: InfisicalSecretFormValues) => void }) => (
+    SecretDialog: ({ open, mode, secret, onClose, onSave, canReadValue }: { open: boolean, mode: DialogMode, secret: InfisicalSecret, onClose: () => void, onSave: (secret: InfisicalSecretFormValues) => void, canReadValue?: boolean }) => (
         open ? (
-            <div data-testid="secret-dialog" data-mode={mode}>
+            <div data-testid="secret-dialog" data-mode={mode} data-can-read-value={String(canReadValue)}>
                 <div data-testid="secret-data">
                     {secret && <div data-testid="secret-key">{secret.secretKey}</div>}
                 </div>
@@ -98,7 +143,7 @@ jest.mock('../SecretDialog', () => ({
 }));
 
 describe('EntityInfisicalSecretsContent', () => {
-    const mockWorkspaceId = 'test-workspace-id';
+    const mockEntityRef = 'component:default/test-component';
 
     // Mock API data
     const mockEnvironments: InfisicalEnvironment[] = [
@@ -170,7 +215,15 @@ describe('EntityInfisicalSecretsContent', () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
+        allowAllExcept();
     });
+
+    const renderContent = () =>
+        render(
+            <TestApiProvider apis={apis}>
+                <EntityInfisicalSecretsContent entityRef={mockEntityRef} />
+            </TestApiProvider>
+        );
 
     it('shows loading state initially', async () => {
         // We need to mock the first useEffect that gets environments
@@ -178,7 +231,7 @@ describe('EntityInfisicalSecretsContent', () => {
 
         render(
             <TestApiProvider apis={apis}>
-                <EntityInfisicalSecretsContent workspaceId={mockWorkspaceId} />
+                <EntityInfisicalSecretsContent entityRef={mockEntityRef} />
             </TestApiProvider>
         );
 
@@ -188,19 +241,19 @@ describe('EntityInfisicalSecretsContent', () => {
     it('loads and displays environments and secrets', async () => {
         render(
             <TestApiProvider apis={apis}>
-                <EntityInfisicalSecretsContent workspaceId={mockWorkspaceId} />
+                <EntityInfisicalSecretsContent entityRef={mockEntityRef} />
             </TestApiProvider>
         );
 
         // Wait for environments to load - since we mocked getEnvironments
         await waitFor(() => {
-            expect(mockInfisicalApi.getEnvironments).toHaveBeenCalledWith(mockWorkspaceId);
+            expect(mockInfisicalApi.getEnvironments).toHaveBeenCalledWith(mockEntityRef);
         });
 
         // Wait for secrets to load
         await waitFor(() => {
             expect(mockInfisicalApi.getSecrets).toHaveBeenCalledWith(
-                mockWorkspaceId,
+                mockEntityRef,
                 expect.objectContaining({ environment: 'development' })
             );
         });
@@ -219,14 +272,14 @@ describe('EntityInfisicalSecretsContent', () => {
     it('handles environment change', async () => {
         render(
             <TestApiProvider apis={apis}>
-                <EntityInfisicalSecretsContent workspaceId={mockWorkspaceId} />
+                <EntityInfisicalSecretsContent entityRef={mockEntityRef} />
             </TestApiProvider>
         );
 
         // Wait for initial secrets to load
         await waitFor(() => {
             expect(mockInfisicalApi.getSecrets).toHaveBeenCalledWith(
-                mockWorkspaceId,
+                mockEntityRef,
                 expect.objectContaining({ environment: 'development' })
             );
         });
@@ -238,13 +291,13 @@ describe('EntityInfisicalSecretsContent', () => {
         // We'd need to trigger the handleEnvironmentChange function directly
         // For now let's just check that the initial loading worked properly
         expect(mockInfisicalApi.getEnvironments).toHaveBeenCalledTimes(1);
-        expect(mockInfisicalApi.getEnvironments).toHaveBeenCalledWith(mockWorkspaceId);
+        expect(mockInfisicalApi.getEnvironments).toHaveBeenCalledWith(mockEntityRef);
     });
 
     it('opens the create secret dialog and creates a new secret', async () => {
         render(
             <TestApiProvider apis={apis}>
-                <EntityInfisicalSecretsContent workspaceId={mockWorkspaceId} />
+                <EntityInfisicalSecretsContent entityRef={mockEntityRef} />
             </TestApiProvider>
         );
 
@@ -269,7 +322,7 @@ describe('EntityInfisicalSecretsContent', () => {
         // Check if createSecret was called
         await waitFor(() => {
             expect(mockInfisicalApi.createSecret).toHaveBeenCalledWith(
-                mockWorkspaceId,
+                mockEntityRef,
                 expect.objectContaining({
                     secretKey: 'NEW_KEY',
                     secretValue: 'new-value',
@@ -286,5 +339,315 @@ describe('EntityInfisicalSecretsContent', () => {
 
         // Check if getSecrets was called again to refresh
         expect(mockInfisicalApi.getSecrets).toHaveBeenCalledTimes(2);
+    });
+
+    it('checks permissions against the entity reference', async () => {
+        renderContent();
+
+        await waitFor(() => {
+            expect(screen.getByTestId('secrets-table')).toBeInTheDocument();
+        });
+
+        for (const permission of [
+            infisicalSecretCreatePermission,
+            infisicalSecretUpdatePermission,
+            infisicalSecretDeletePermission,
+            infisicalSecretValueReadPermission,
+        ]) {
+            expect(mockUsePermission).toHaveBeenCalledWith({
+                permission,
+                resourceRef: mockEntityRef,
+            });
+        }
+    });
+
+    it('shows all controls when everything is allowed', async () => {
+        renderContent();
+
+        await waitFor(() => {
+            expect(screen.getByTestId('secrets-table')).toBeInTheDocument();
+        });
+
+        expect(screen.getByText('ADD SECRET')).toBeInTheDocument();
+        expect(screen.getByLabelText('edit')).toBeInTheDocument();
+        expect(screen.getByLabelText('delete')).toBeInTheDocument();
+        expect(screen.getByLabelText('Show value')).toBeInTheDocument();
+    });
+
+    it('hides the add button when create is not allowed', async () => {
+        allowAllExcept(infisicalSecretCreatePermission.name);
+
+        renderContent();
+
+        await waitFor(() => {
+            expect(screen.getByTestId('secrets-table')).toBeInTheDocument();
+        });
+
+        expect(screen.queryByText('ADD SECRET')).not.toBeInTheDocument();
+        expect(screen.getByLabelText('edit')).toBeInTheDocument();
+        expect(screen.getByLabelText('delete')).toBeInTheDocument();
+    });
+
+    it('hides the edit button when update is not allowed', async () => {
+        allowAllExcept(infisicalSecretUpdatePermission.name);
+
+        renderContent();
+
+        await waitFor(() => {
+            expect(screen.getByTestId('secrets-table')).toBeInTheDocument();
+        });
+
+        expect(screen.queryByLabelText('edit')).not.toBeInTheDocument();
+        expect(screen.getByLabelText('delete')).toBeInTheDocument();
+    });
+
+    it('hides the delete button when delete is not allowed', async () => {
+        allowAllExcept(infisicalSecretDeletePermission.name);
+
+        renderContent();
+
+        await waitFor(() => {
+            expect(screen.getByTestId('secrets-table')).toBeInTheDocument();
+        });
+
+        expect(screen.getByLabelText('edit')).toBeInTheDocument();
+        expect(screen.queryByLabelText('delete')).not.toBeInTheDocument();
+    });
+
+    it('hides the reveal toggle when value.read is not allowed', async () => {
+        allowAllExcept(infisicalSecretValueReadPermission.name);
+
+        renderContent();
+
+        await waitFor(() => {
+            expect(screen.getByTestId('secrets-table')).toBeInTheDocument();
+        });
+
+        expect(screen.queryByLabelText('Show value')).not.toBeInTheDocument();
+        expect(screen.getByText('••••••••••••')).toBeInTheDocument();
+    });
+
+    it.each([
+        ['allowed', [], 'true'],
+        ['denied', [infisicalSecretValueReadPermission.name], 'false'],
+    ] as const)('tells the edit dialog whether values can be read when value.read is %s', async (_, denied, expected) => {
+        allowAllExcept(...denied);
+
+        renderContent();
+
+        await waitFor(() => {
+            expect(screen.getByTestId('secrets-table')).toBeInTheDocument();
+        });
+
+        fireEvent.click(screen.getByLabelText('edit'));
+
+        expect(screen.getByTestId('secret-dialog')).toHaveAttribute('data-can-read-value', expected);
+    });
+
+    it('shows a permission message when listing secrets is forbidden', async () => {
+        mockInfisicalApi.getSecrets.mockRejectedValueOnce(await responseError(403));
+
+        renderContent();
+
+        await waitFor(() => {
+            expect(
+                screen.getByText("You don't have permission to view these secrets"),
+            ).toBeInTheDocument();
+        });
+
+        expect(screen.queryByTestId('error-panel')).not.toBeInTheDocument();
+        expect(mockErrorApi.post).not.toHaveBeenCalled();
+    });
+
+    it('shows a permission message when listing environments is forbidden', async () => {
+        mockInfisicalApi.getEnvironments.mockRejectedValueOnce(await responseError(403));
+
+        renderContent();
+
+        await waitFor(() => {
+            expect(
+                screen.getByText("You don't have permission to view these secrets"),
+            ).toBeInTheDocument();
+        });
+
+        expect(mockErrorApi.post).not.toHaveBeenCalled();
+        expect(mockInfisicalApi.getSecrets).not.toHaveBeenCalled();
+    });
+
+    it('clears the permission message once a later environment lookup succeeds', async () => {
+        // e.g. the environment annotation moves from one whose identity is
+        // denied to one whose identity is allowed
+        mockInfisicalApi.getEnvironments.mockRejectedValueOnce(await responseError(403));
+
+        const renderWithEnvironment = (env: string) => (
+            <TestApiProvider apis={apis}>
+                <EntityInfisicalSecretsContent entityRef={mockEntityRef} environment={env} />
+            </TestApiProvider>
+        );
+
+        const { rerender } = render(renderWithEnvironment('development'));
+
+        await waitFor(() => {
+            expect(
+                screen.getByText("You don't have permission to view these secrets"),
+            ).toBeInTheDocument();
+        });
+
+        rerender(renderWithEnvironment('staging'));
+
+        await waitFor(() => {
+            expect(screen.getByTestId('secrets-table')).toBeInTheDocument();
+        });
+        expect(
+            screen.queryByText("You don't have permission to view these secrets"),
+        ).not.toBeInTheDocument();
+        expect(mockInfisicalApi.getEnvironments).toHaveBeenCalledTimes(2);
+        expect(mockInfisicalApi.getSecrets).toHaveBeenLastCalledWith(
+            mockEntityRef,
+            expect.objectContaining({ environment: 'staging' }),
+        );
+    });
+
+    it('ignores an environment lookup that resolves after the annotation changed', async () => {
+        let resolveFirst: (value: unknown) => void = () => {};
+        mockInfisicalApi.getEnvironments
+            .mockImplementationOnce(() => new Promise(resolve => { resolveFirst = resolve; }))
+            .mockResolvedValueOnce({ environments: mockEnvironments, name: 'current-workspace' });
+
+        const renderWithEnvironment = (env: string) => (
+            <TestApiProvider apis={apis}>
+                <EntityInfisicalSecretsContent entityRef={mockEntityRef} environment={env} />
+            </TestApiProvider>
+        );
+
+        const { rerender } = render(renderWithEnvironment('development'));
+        rerender(renderWithEnvironment('staging'));
+
+        await waitFor(() => {
+            expect(screen.getByText('current-workspace')).toBeInTheDocument();
+        });
+
+        // The first, outdated lookup finishes last and must not win
+        resolveFirst({ environments: mockEnvironments, name: 'stale-workspace' });
+        await new Promise(resolve => setTimeout(resolve, 0));
+
+        expect(screen.getByText('current-workspace')).toBeInTheDocument();
+        expect(screen.queryByText('stale-workspace')).not.toBeInTheDocument();
+    });
+
+    it('still reports non-permission errors', async () => {
+        mockInfisicalApi.getSecrets.mockRejectedValueOnce(await responseError(500));
+
+        renderContent();
+
+        await waitFor(() => {
+            expect(screen.getByTestId('error-panel')).toBeInTheDocument();
+        });
+    });
+
+    describe('when listing secrets fails for one environment', () => {
+        /** Picks another environment in the selector */
+        const selectEnvironment = (from: string, to: string) => {
+            fireEvent.mouseDown(screen.getByText(from));
+            fireEvent.click(screen.getByRole('option', { name: to }));
+        };
+
+        it.each([
+            [403, "You don't have permission to view these secrets"],
+            [500, 'Request failed with 500 Internal Server Error'],
+        ])('keeps the environment selector after a %i so another one can be picked', async (status, message) => {
+            mockInfisicalApi.getSecrets.mockRejectedValueOnce(await responseError(status));
+
+            renderContent();
+
+            await waitFor(() => {
+                expect(screen.getByText(message)).toBeInTheDocument();
+            });
+            // The selector is still there, the listing controls are not
+            expect(screen.getByText('Development')).toBeInTheDocument();
+            expect(screen.queryByLabelText('filter secrets')).not.toBeInTheDocument();
+            expect(screen.queryByText('ADD SECRET')).not.toBeInTheDocument();
+
+            selectEnvironment('Development', 'Staging');
+
+            await waitFor(() => {
+                expect(screen.getByTestId('secrets-table')).toBeInTheDocument();
+            });
+            expect(mockInfisicalApi.getSecrets).toHaveBeenLastCalledWith(
+                mockEntityRef,
+                expect.objectContaining({ environment: 'staging' }),
+            );
+            expect(screen.queryByText(message)).not.toBeInTheDocument();
+            expect(screen.getByText('ADD SECRET')).toBeInTheDocument();
+        });
+    });
+
+    describe('403 reasons', () => {
+        it.each([
+            [
+                'identity-not-allowed',
+                "Entity 'component:default/test-component' is not allowed to use Infisical identity 'payments'",
+            ],
+            ['infisical-forbidden', 'Infisical API error (403): not a project member'],
+        ])('reports %s as a configuration problem', async (reason, message) => {
+            mockInfisicalApi.getSecrets.mockRejectedValueOnce(await responseError(403, { reason, message }));
+
+            renderContent();
+
+            await waitFor(() => {
+                expect(
+                    screen.getByText('Infisical access is not set up correctly for this entity'),
+                ).toBeInTheDocument();
+            });
+            expect(
+                screen.getByText(`${message}. Ask your Backstage administrator to check the Infisical configuration.`),
+            ).toBeInTheDocument();
+            expect(
+                screen.queryByText("You don't have permission to view these secrets"),
+            ).not.toBeInTheDocument();
+        });
+
+        it('reports an entity restriction with the message of the backend', async () => {
+            const message = "Access to environment 'development' is not allowed for this entity";
+            mockInfisicalApi.getSecrets.mockRejectedValueOnce(
+                await responseError(403, { reason: 'entity-restriction', message }),
+            );
+
+            renderContent();
+
+            await waitFor(() => {
+                expect(screen.getByText("This entity can't access these secrets")).toBeInTheDocument();
+            });
+            expect(screen.getByText(message)).toBeInTheDocument();
+        });
+
+        it('reports a denied permission as a permission problem', async () => {
+            mockInfisicalApi.getSecrets.mockRejectedValueOnce(
+                await responseError(403, { reason: 'permission-denied', message: 'Not allowed' }),
+            );
+
+            renderContent();
+
+            await waitFor(() => {
+                expect(
+                    screen.getByText("You don't have permission to view these secrets"),
+                ).toBeInTheDocument();
+            });
+        });
+
+        it('tells the causes apart when listing environments is forbidden', async () => {
+            mockInfisicalApi.getEnvironments.mockRejectedValueOnce(
+                await responseError(403, { reason: 'infisical-forbidden', message: 'Infisical API error (403): nope' }),
+            );
+
+            renderContent();
+
+            await waitFor(() => {
+                expect(
+                    screen.getByText('Infisical access is not set up correctly for this entity'),
+                ).toBeInTheDocument();
+            });
+            expect(mockInfisicalApi.getSecrets).not.toHaveBeenCalled();
+        });
     });
 });

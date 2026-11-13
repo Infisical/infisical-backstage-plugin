@@ -58,54 +58,54 @@ export interface InfisicalApi {
   getWorkspaces(): Promise<InfisicalWorkspace[]>;
 
   /**
-   * Fetches environments for a specific workspace
-   * @param workspaceId - ID of the workspace to fetch environments for
+   * Fetches environments of the Infisical project linked to an entity
+   * @param entityRef - Reference of the catalog entity (e.g. `component:default/my-service`)
    */
-  getEnvironments(workspaceId: string): Promise<GetEnvironmentsResponse>;
+  getEnvironments(entityRef: string): Promise<GetEnvironmentsResponse>;
 
   /**
-   * Fetches secrets for a specific workspace with optional path and environment
-   * @param workspaceId - ID of the workspace to fetch secrets for
+   * Fetches secrets of the Infisical project linked to an entity
+   * @param entityRef - Reference of the catalog entity
    * @param options - Optional path and environment filters
    */
   getSecrets(
-    workspaceId: string,
+    entityRef: string,
     options?: InfisicalOptions,
   ): Promise<GetSecretsResponse>;
 
   /**
-   * Fetches a specific secret by ID
-   * @param workspaceId - ID of the workspace containing the secret
+   * Fetches a specific secret, including its value
+   * @param entityRef - Reference of the catalog entity
    * @param secretKey - Key of the secret to fetch
    * @param options - Optional path and environment
    */
   getSecretByKey(
-    workspaceId: string,
+    entityRef: string,
     secretKey: string,
     options?: InfisicalOptions,
   ): Promise<InfisicalSecret>;
 
   /**
    * Creates a new secret in Infisical
-   * @param workspaceId - ID of the workspace to create the secret in
+   * @param entityRef - Reference of the catalog entity
    * @param secretData - Secret data to create
    * @param options - Optional path and environment
    */
   createSecret(
-    workspaceId: string,
+    entityRef: string,
     secretData: InfisicalSecretFormValues,
     options?: InfisicalOptions,
   ): Promise<InfisicalSecret>;
 
   /**
    * Updates an existing secret in Infisical
-   * @param workspaceId - ID of the workspace containing the secret
+   * @param entityRef - Reference of the catalog entity
    * @param secretId - ID of the secret to update
    * @param secretData - Updated secret data
    * @param options - Optional path and environment
    */
   updateSecret(
-    workspaceId: string,
+    entityRef: string,
     secretId: string,
     secretData: InfisicalSecretFormValues,
     options?: InfisicalOptions,
@@ -113,12 +113,12 @@ export interface InfisicalApi {
 
   /**
    * Deletes a secret from Infisical
-   * @param workspaceId - ID of the workspace containing the secret
+   * @param entityRef - Reference of the catalog entity
    * @param secretId - ID of the secret to delete
    * @param options - Optional path and environment
    */
   deleteSecret(
-    workspaceId: string,
+    entityRef: string,
     secretId: string,
     options?: InfisicalOptions,
   ): Promise<void>;
@@ -144,13 +144,11 @@ export class InfisicalClient implements InfisicalApi {
   }
 
   /**
-   * Validates that a workspace ID is provided
+   * Validates that an entity reference is provided
    */
-  private validateWorkspaceId(workspaceId: string): void {
-    if (!workspaceId) {
-      throw new Error(
-        'No workspace ID provided. Set the infisical/projectId annotation in the entity yaml files',
-      );
+  private validateEntityRef(entityRef: string): void {
+    if (!entityRef) {
+      throw new Error('No entity reference provided');
     }
   }
 
@@ -160,7 +158,7 @@ export class InfisicalClient implements InfisicalApi {
   private async handleApiError(response: Response): Promise<never> {
     let errorMessage = '';
     try {
-      const errorData = await response.json();
+      const errorData = await response.clone().json();
 
       // Extract the most relevant message
       if (typeof errorData === 'object') {
@@ -214,14 +212,14 @@ export class InfisicalClient implements InfisicalApi {
   }
 
   /**
-   * Fetches environments for a specific workspace
+   * Fetches environments of the project linked to an entity
    */
-  async getEnvironments(workspaceId: string): Promise<GetEnvironmentsResponse> {
-    this.validateWorkspaceId(workspaceId);
+  async getEnvironments(entityRef: string): Promise<GetEnvironmentsResponse> {
+    this.validateEntityRef(entityRef);
 
     const baseUrl = await this.getBaseUrl();
     const response = await this.fetchApi.fetch(
-      `${baseUrl}/environments?workspaceId=${encodeURIComponent(workspaceId)}`,
+      `${baseUrl}/environments?entityRef=${encodeURIComponent(entityRef)}`,
     );
 
     if (!response.ok) {
@@ -232,17 +230,17 @@ export class InfisicalClient implements InfisicalApi {
   }
 
   /**
-   * Fetches secrets for a specific workspace
+   * Fetches secrets of the project linked to an entity
    */
   async getSecrets(
-    workspaceId: string,
+    entityRef: string,
     options?: InfisicalOptions,
   ): Promise<GetSecretsResponse> {
-    this.validateWorkspaceId(workspaceId);
+    this.validateEntityRef(entityRef);
 
     const baseUrl = await this.getBaseUrl();
     const queryParams = new URLSearchParams();
-    queryParams.append('workspaceId', workspaceId);
+    queryParams.append('entityRef', entityRef);
 
     if (options?.path && options.path !== '/') {
       queryParams.append('path', options.path);
@@ -267,15 +265,15 @@ export class InfisicalClient implements InfisicalApi {
    * Fetches a specific secret by ID
    */
   async getSecretByKey(
-    workspaceId: string,
+    entityRef: string,
     secretKey: string,
     options?: InfisicalOptions,
   ): Promise<InfisicalSecret> {
-    this.validateWorkspaceId(workspaceId);
+    this.validateEntityRef(entityRef);
 
     const baseUrl = await this.getBaseUrl();
     const queryParams = new URLSearchParams();
-    queryParams.append('workspaceId', workspaceId);
+    queryParams.append('entityRef', entityRef);
 
     if (options?.path && options.path !== '/') {
       queryParams.append('path', options.path);
@@ -302,18 +300,18 @@ export class InfisicalClient implements InfisicalApi {
    * Creates a new secret in Infisical
    */
   async createSecret(
-    workspaceId: string,
+    entityRef: string,
     secretData: InfisicalSecretFormValues,
     options?: InfisicalOptions,
   ): Promise<InfisicalSecret> {
-    this.validateWorkspaceId(workspaceId);
+    this.validateEntityRef(entityRef);
 
     const baseUrl = await this.getBaseUrl();
 
     const body = {
       ...secretData,
       secretPath: options?.path,
-      workspaceId,
+      entityRef,
       environment: options?.environment,
     };
 
@@ -336,18 +334,18 @@ export class InfisicalClient implements InfisicalApi {
    * Updates an existing secret in Infisical
    */
   async updateSecret(
-    workspaceId: string,
+    entityRef: string,
     secretId: string,
     secretData: InfisicalSecretFormValues,
     options?: InfisicalOptions,
   ): Promise<InfisicalSecret> {
-    this.validateWorkspaceId(workspaceId);
+    this.validateEntityRef(entityRef);
 
     const baseUrl = await this.getBaseUrl();
     const body = {
       ...secretData,
       secretPath: options?.path,
-      workspaceId,
+      entityRef,
       environment: options?.environment,
     };
 
@@ -373,16 +371,16 @@ export class InfisicalClient implements InfisicalApi {
    * Deletes a secret from Infisical
    */
   async deleteSecret(
-    workspaceId: string,
+    entityRef: string,
     secretId: string,
     options?: InfisicalOptions,
   ): Promise<void> {
-    this.validateWorkspaceId(workspaceId);
+    this.validateEntityRef(entityRef);
 
     const baseUrl = await this.getBaseUrl();
     const body = {
       secretPath: options?.path,
-      workspaceId,
+      entityRef,
       environment: options?.environment,
     };
 
@@ -398,7 +396,7 @@ export class InfisicalClient implements InfisicalApi {
     );
 
     if (!response.ok) {
-      this.handleApiError(response);
+      await this.handleApiError(response);
     }
   }
 }

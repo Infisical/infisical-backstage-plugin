@@ -1,9 +1,12 @@
-import { startTestBackend } from '@backstage/backend-test-utils';
+import { mockServices, startTestBackend } from '@backstage/backend-test-utils';
+import { catalogServiceMock } from '@backstage/plugin-catalog-node/testUtils';
+import { infisicalPermissions } from '@infisical/backstage-plugin-infisical-common';
 import { infisicalPlugin } from './plugin';
 
-jest.mock('./service/infisicalApi', () => {
+jest.mock('./service/InfisicalApi', () => {
   const mockClient = {
     getSecrets: jest.fn(),
+    getSecretById: jest.fn(),
     getEnvironments: jest.fn(),
     createSecret: jest.fn(),
     updateSecret: jest.fn(),
@@ -16,15 +19,22 @@ jest.mock('./service/infisicalApi', () => {
 });
 
 describe('infisical-backend', () => {
-  it('should register routes', async () => {
-    try {
-      const backend = await startTestBackend({
-        features: [infisicalPlugin]
-      });
+  it('starts and registers its permissions', async () => {
+    const permissionsRegistry = mockServices.permissionsRegistry.mock();
 
-      expect(backend).toBeDefined();
-    } catch (error) {
-      console.error('Error starting test backend:', error);
-    }
+    const backend = await startTestBackend({
+      features: [
+        infisicalPlugin,
+        catalogServiceMock.factory(),
+        permissionsRegistry.factory,
+      ],
+    });
+
+    expect(backend).toBeDefined();
+    expect(permissionsRegistry.addPermissions).toHaveBeenCalledWith(
+      infisicalPermissions,
+    );
+
+    await backend.stop();
   });
 });

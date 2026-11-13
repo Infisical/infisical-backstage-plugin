@@ -11,6 +11,7 @@ A comprehensive Backstage plugin suite that integrates with [Infisical](https://
 - **Folder Navigation**: Browse through the folder structure of your Infisical projects
 - **Environment Support**: Manage secrets across different environments (Development, Staging, Production)
 - **Entity Integration**: Connect Backstage entities to Infisical projects
+- **Multiple Machine Identities**: Give each entity, or each of its environments, its own Infisical machine identity, and see the Backstage user in Infisical's audit log
 
 ## Installation
 
@@ -27,6 +28,17 @@ yarn --cwd packages/app add @infisical/backstage-plugin-infisical
 # From your Backstage root directory
 yarn --cwd packages/backend add @infisical/backstage-backend-plugin-infisical
 ```
+
+### Common Package
+
+`@infisical/backstage-plugin-infisical-common` ships the permission definitions and annotation keys shared by both plugins. It is installed automatically as a dependency of the frontend and backend plugins. Add it to your backend only if you reference the permissions in a custom permission policy:
+
+```bash
+# From your Backstage root directory
+yarn --cwd packages/backend add @infisical/backstage-plugin-infisical-common
+```
+
+> **Breaking change:** the backend API is now entity-based (the frontend sends an `entityRef` instead of a `workspaceId`) and every route is protected by the permission framework. The frontend and backend plugins must be upgraded together.
 
 ## Configuration
 
@@ -49,6 +61,48 @@ infisical:
       clientId: ${INFISICAL_CLIENT_ID}
       clientSecret: ${INFISICAL_CLIENT_SECRET}
 ```
+
+#### Multiple machine identities
+
+By default every request from Backstage reaches Infisical as the single identity configured under `authentication`. To tell teams, entities or environments apart in Infisical, configure additional named identities and let entities select them with the `infisical/identity` annotations (see [Entity Configuration](#entity-configuration)):
+
+```yaml
+infisical:
+  baseUrl: https://app.infisical.com
+  # Default identity, used by entities without an infisical/identity annotation.
+  # Optional when identities are configured.
+  authentication:
+    universalAuth:
+      clientId: ${INFISICAL_CLIENT_ID}
+      clientSecret: ${INFISICAL_CLIENT_SECRET}
+  identities:
+    payments-dev:
+      universalAuth:
+        clientId: ${INFISICAL_PAYMENTS_DEV_CLIENT_ID}
+        clientSecret: ${INFISICAL_PAYMENTS_DEV_CLIENT_SECRET}
+    payments-prod:
+      universalAuth:
+        clientId: ${INFISICAL_PAYMENTS_PROD_CLIENT_ID}
+        clientSecret: ${INFISICAL_PAYMENTS_PROD_CLIENT_SECRET}
+      # Optional: only these entities may use this identity (others get 403)
+      allowedEntityRefs:
+        - component:default/payments-service
+```
+
+- Each identity accepts the same `auth_token` or `universalAuth` block as `authentication`.
+- Identity names are Backstage config keys: letters and digits, optionally separated by `-` or `_`, with each part starting with a letter (`payments-dev` works, `team-1` does not).
+- Without `allowedEntityRefs`, any entity can reference the identity. Since anyone who can edit a `catalog-info.yaml` can set the annotation, use the allowlist for identities with broad access.
+- Every identity needs access to the entity's Infisical project in Infisical itself.
+
+#### Audit trail in Infisical
+
+Each request to Infisical is made as the selected machine identity, so the actor of every [audit log](https://infisical.com/docs/documentation/platform/audit-logs) entry shows which identity, and therefore which entity or environment, was used. The backend also sends the Backstage user and entity in the `User-Agent` header, which Infisical stores with each audit log entry:
+
+```text
+backstage-plugin-infisical (user=user:default/jane; entity=component:default/payments-service)
+```
+
+The backend only accepts user credentials: requests made with service credentials (another backend plugin or an external access token) are rejected with `403`, because the permission framework allows service principals without consulting your policy. The User-Agent is informational and set by your Backstage backend, so treat it as a tracing aid rather than proof of identity.
 
 Add the plugin to your backend in `packages/backend/src/index.ts`:
 
@@ -115,6 +169,22 @@ metadata:
 | `infisical/projectId` | ✅ | The ID of your Infisical project |
 | `infisical/environment` | ❌ | Lock the view to a specific environment (e.g., "development", "staging", "production") |
 | `infisical/secretPath` | ❌ | Specify the folder path to display secrets from |
+| `infisical/identity` | ❌ | Name of the machine identity from `infisical.identities` to use. Defaults to `infisical.authentication` |
+| `infisical/identity.<environment>` | ❌ | Machine identity to use for one environment, e.g. `infisical/identity.prod`. Overrides `infisical/identity` for that environment |
+
+#### Machine Identity Selection
+
+An entity can use several machine identities, for example a separate identity per environment:
+
+```yaml
+metadata:
+  annotations:
+    infisical/projectId: <your-infisical-project-id>
+    infisical/identity: payments-dev        # default for this entity
+    infisical/identity.prod: payments-prod  # used for the prod environment
+```
+
+For each request the backend picks `infisical/identity.<environment>` when the request targets that environment, otherwise `infisical/identity`, otherwise the default `infisical.authentication` identity. Listing environments targets no environment (unless the entity is locked with `infisical/environment`), so it uses the identity from `infisical/identity` or the default identity, which must be able to read the project. When the entity has neither and only names per-environment identities, those are tried in annotation order until one can read the project.
 
 
 #### Secret Path Behavior
@@ -144,6 +214,161 @@ infisical/secretPath: "+/folder/nested"
 | `infisical/secretPath: "/api/config"` | View only `/api/config`, no subfolder navigation |
 | `infisical/secretPath: "+/api/config"` | Start at `/api/config`, allow navigation to subfolders |
 | No `secretPath` annotation | Start at root (`/`), allow full navigation |
+
+## Permissions
+
+Both plugins integrate with the [Backstage permission framework](https://backstage.io/docs/permissions/overview). The backend enforces every permission; the frontend only uses them to hide controls the user cannot use.
+
+All permissions use the `catalog-entity` resource type with the entity the secrets are accessed through as the resource. This means your policy can reuse the catalog's conditional rules such as `isEntityOwner`, and the catalog backend evaluates the conditions. No extra rules need to be registered for this plugin.
+
+| Permission | Action | Gates |
+|---|---|---|
+| `infisical.secret.describe` | `read` | Listing secrets, folders and environments (`GET /secrets`, `GET /environments`) |
+| `infisical.secret.value.read` | none | Revealing secret values (`GET /secrets/:secretId`). Without it, values are redacted from listings |
+| `infisical.secret.create` | `create` | Creating secrets (`POST /secrets`) |
+| `infisical.secret.update` | `update` | Updating secrets (`PATCH /secrets/:secretId`). Without `infisical.secret.value.read`, users can still rename a secret or change its comment: the edit dialog hides the value and keeps it unless a new one is entered, and the value is redacted from the update response |
+| `infisical.secret.delete` | `delete` | Deleting secrets (`DELETE /secrets/:secretId`) |
+
+`infisical.secret.value.read` deliberately has no action attribute. A policy or role that allows every `read` on catalog entities therefore does not reveal secret values: the permission has to be granted by name.
+
+The backend also enforces the entity annotations server-side, independently of the policy:
+
+- The Infisical project is always taken from `infisical/projectId`; requests cannot pick another project.
+- When `infisical/environment` is set, requests for any other environment are rejected with `403`. The requested environment is trimmed before it is compared and before the `infisical/identity.<environment>` annotation is looked up.
+- When `infisical/secretPath` is set without the `+` prefix, only that exact path is accessible. With the `+` prefix, that path and its subfolders are accessible. Path traversal attempts are rejected with `400`.
+- Requests for an entity that does not exist or has no `infisical/projectId` annotation return `404`.
+- Requests for an entity whose `infisical/identity` annotations name an identity that is not configured return `404`; identities with `allowedEntityRefs` reject other entities with `403`. These checks run after the permission check.
+- Secret keys and project IDs are sent to Infisical as a single encoded URL path segment. A secret key of `.` or `..`, or an `environment` in a request body that is not a string, is rejected with `400`.
+- Errors returned by Infisical keep their meaning: `400`/`422` become `400`, and `403`, `404` and `409` are passed through (a `403` here means the machine identity lacks access in Infisical, for example because it is not a member of the project). Rate limiting, timeouts and `5xx` responses become `503`. A `401` from Infisical means the configured machine identity credentials are invalid and is reported as `500`.
+- Every `403` carries its cause as `error.reason` in the response body, which the frontend uses to tell a missing permission apart from a configuration problem:
+
+  | `error.reason` | Cause |
+  |---|---|
+  | `permission-denied` | The permission policy denied the operation |
+  | `entity-restriction` | The environment or path is outside what the entity's annotations allow |
+  | `identity-not-allowed` | The entity is not in the `allowedEntityRefs` of its machine identity |
+  | `infisical-forbidden` | Infisical denied the machine identity |
+
+- Only reads are retried (up to three times) on network errors and `408`/`429`/`5xx` responses. Writes are retried only on `429`, and other errors are never retried.
+
+Make sure the permission framework is enabled in `app-config.yaml`:
+
+```yaml
+permission:
+  enabled: true
+```
+
+### Using the RBAC plugin
+
+If you manage permissions with the [community RBAC plugin](https://github.com/backstage/community-plugins/tree/main/workspaces/rbac) instead of a code policy, add `infisical-backend` to `permission.rbac.pluginsWithPermission` so the five permissions show up in the role editor:
+
+```yaml
+permission:
+  enabled: true
+  rbac:
+    pluginsWithPermission:
+      - catalog
+      - infisical-backend
+```
+
+**Grant catalog access by permission name, not by resource type.** RBAC treats a resource-type grant as covering every permission that shares that resource type and action. Because the Infisical permissions use the `catalog-entity` resource type, a role holding `catalog-entity, read, allow` is also allowed `infisical.secret.describe`, and `catalog-entity, update, allow` also covers `infisical.secret.update`, without ever being granted those permissions. Use the named catalog permission instead and grant the Infisical permissions explicitly. `infisical.secret.value.read` has no action, which RBAC writes as `use`, so a `read` grant on the resource type does not cover it:
+
+```csv
+p, role:default/everyone, catalog.entity.read, read, allow
+p, role:default/everyone, infisical.secret.describe, read, allow
+p, role:default/secret-editors, infisical.secret.value.read, use, allow
+p, role:default/secret-editors, infisical.secret.create, create, allow
+p, role:default/secret-editors, infisical.secret.update, update, allow
+p, role:default/secret-editors, infisical.secret.delete, delete, allow
+```
+
+Note that the built-in RBAC admin role holds `catalog-entity, read`, so RBAC administrators can always list secrets. That grant does not let them reveal values.
+
+### Example policy
+
+The policy below lets every signed-in user list secrets, but restricts creating, updating, deleting and revealing values to the owners of the entity. It uses `createCatalogConditionalDecision` and `catalogConditions.isEntityOwner` from the catalog backend, so the catalog resolves the condition.
+
+```typescript
+// packages/backend/src/plugins/infisicalPermissionPolicy.ts
+import { createBackendModule } from '@backstage/backend-plugin-api';
+import {
+  AuthorizeResult,
+  isPermission,
+  PolicyDecision,
+} from '@backstage/plugin-permission-common';
+import {
+  PermissionPolicy,
+  PolicyQuery,
+  PolicyQueryUser,
+} from '@backstage/plugin-permission-node';
+import { policyExtensionPoint } from '@backstage/plugin-permission-node/alpha';
+import {
+  catalogConditions,
+  createCatalogConditionalDecision,
+} from '@backstage/plugin-catalog-backend/alpha';
+import {
+  infisicalSecretCreatePermission,
+  infisicalSecretDeletePermission,
+  infisicalSecretDescribePermission,
+  infisicalSecretUpdatePermission,
+  infisicalSecretValueReadPermission,
+} from '@infisical/backstage-plugin-infisical-common';
+
+const ownerOnlyPermissions = [
+  infisicalSecretCreatePermission,
+  infisicalSecretUpdatePermission,
+  infisicalSecretDeletePermission,
+  infisicalSecretValueReadPermission,
+];
+
+class InfisicalPermissionPolicy implements PermissionPolicy {
+  async handle(
+    request: PolicyQuery,
+    user?: PolicyQueryUser,
+  ): Promise<PolicyDecision> {
+    // Everyone can list secrets, folders and environments
+    if (isPermission(request.permission, infisicalSecretDescribePermission)) {
+      return { result: AuthorizeResult.ALLOW };
+    }
+
+    // Only entity owners can create, update, delete and reveal values
+    const ownerOnly = ownerOnlyPermissions.find(permission =>
+      isPermission(request.permission, permission),
+    );
+    if (ownerOnly) {
+      return createCatalogConditionalDecision(
+        ownerOnly,
+        catalogConditions.isEntityOwner({
+          claims: user?.info.ownershipEntityRefs ?? [],
+        }),
+      );
+    }
+
+    // Everything else (catalog, scaffolder, ...) is allowed
+    return { result: AuthorizeResult.ALLOW };
+  }
+}
+
+export const infisicalPermissionPolicyModule = createBackendModule({
+  pluginId: 'permission',
+  moduleId: 'infisical-policy',
+  register(reg) {
+    reg.registerInit({
+      deps: { policy: policyExtensionPoint },
+      async init({ policy }) {
+        policy.setPolicy(new InfisicalPermissionPolicy());
+      },
+    });
+  },
+});
+```
+
+Register it in `packages/backend/src/index.ts` instead of the allow-all policy module:
+
+```typescript
+backend.add(import('@backstage/plugin-permission-backend'));
+backend.add(import('./plugins/infisicalPermissionPolicy'));
+```
 
 ## Usage
 

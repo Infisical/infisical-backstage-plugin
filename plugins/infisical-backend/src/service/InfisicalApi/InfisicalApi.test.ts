@@ -1,21 +1,32 @@
 import { ConfigReader } from '@backstage/config';
-import { getVoidLogger } from '@backstage/backend-common';
-import { InfisicalApiClient } from '../InfisicalApi';
-import { NotFoundError } from '@backstage/errors';
+import { mockServices } from '@backstage/backend-test-utils';
+import { InfisicalApiClient, buildUserAgent } from '../InfisicalApi';
+import { InputError } from '@backstage/errors';
 
 global.fetch = jest.fn();
 
-jest.mock('@backstage/errors', () => {
-  const actual = jest.requireActual('@backstage/errors');
+/** A successful JSON response as returned by the mocked fetch */
+function jsonResponse(body: unknown) {
   return {
-    ...actual,
-    NotFoundError: jest.fn().mockImplementation(message => {
-      const error = new Error(message);
-      error.name = 'NotFoundError';
-      return error;
-    }),
+    ok: true,
+    status: 200,
+    json: () => Promise.resolve(body),
+    text: () => Promise.resolve(JSON.stringify(body)),
+    headers: { get: () => 'application/json' },
   };
-});
+}
+
+/** A failed JSON response as returned by the mocked fetch */
+function errorResponse(status: number, message = 'nope') {
+  const body = { statusCode: status, message };
+  return {
+    ok: false,
+    status,
+    json: () => Promise.resolve(body),
+    text: () => Promise.resolve(JSON.stringify(body)),
+    headers: { get: () => 'application/json' },
+  };
+}
 
 describe('InfisicalApiClient', () => {
   const mockConfig = new ConfigReader({
@@ -41,7 +52,7 @@ describe('InfisicalApiClient', () => {
     },
   });
 
-  const logger = getVoidLogger();
+  const logger = mockServices.rootLogger();
   let apiClient: InfisicalApiClient;
 
   beforeEach(() => {
@@ -91,96 +102,381 @@ describe('InfisicalApiClient', () => {
       apiClient = new InfisicalApiClient({ config: mockConfig, logger });
     });
 
-    it('should fetch secrets successfully', async () => {
-      (global.fetch as jest.Mock).mockImplementationOnce(() =>
-        Promise.resolve({
-          ok: true,
-          status: 200,
-          json: () =>
-            Promise.resolve({
-              secrets: [
-                { id: 'mock-secret-1', key: 'API_KEY', value: 'mock-value-1' },
-                {
-                  id: 'mock-secret-2',
-                  key: 'DATABASE_URL',
-                  value: 'mock-value-2',
+    it('should fetch secrets and folders successfully', async () => {
+      // Both requests run in parallel, so answer by URL rather than call order
+      (global.fetch as jest.Mock).mockImplementation((url: string) =>
+        Promise.resolve(
+          jsonResponse(
+            new URL(url).pathname === '/api/v1/folders'
+              ? { folders: [{ id: 'folder-1', name: 'nested' }] }
+              : {
+                  secrets: [
+                    {
+                      id: 'mock-secret-1',
+                      key: 'API_KEY',
+                      value: 'mock-value-1',
+                    },
+                    {
+                      id: 'mock-secret-2',
+                      key: 'DATABASE_URL',
+                      value: 'mock-value-2',
+                    },
+                  ],
                 },
-              ],
-            }),
-          text: () =>
-            Promise.resolve(
-              JSON.stringify({
-                secrets: [
-                  {
-                    id: 'mock-secret-1',
-                    key: 'API_KEY',
-                    value: 'mock-value-1',
-                  },
-                  {
-                    id: 'mock-secret-2',
-                    key: 'DATABASE_URL',
-                    value: 'mock-value-2',
-                  },
-                ],
-              }),
-            ),
-          headers: {
-            get: () => 'application/json',
-          },
-        }),
-      );
-
-      (global.fetch as jest.Mock).mockImplementationOnce(() =>
-        Promise.resolve({
-          ok: true,
-          status: 200,
-          json: () =>
-            Promise.resolve({
-              folders: [],
-            }),
-          text: () =>
-            Promise.resolve(
-              JSON.stringify({
-                folders: [],
-              }),
-            ),
-          headers: {
-            get: () => 'application/json',
-          },
-        }),
+          ),
+        ),
       );
 
       const result = await apiClient.getSecrets('workspace123', '/path', 'dev');
 
-      expect(result).toBeDefined();
+      expect(global.fetch).toHaveBeenCalledTimes(2);
       expect(result.secrets).toHaveLength(2);
       expect(result.secrets[0].key).toBe('API_KEY');
+      expect(result.folders).toEqual([{ id: 'folder-1', name: 'nested' }]);
     });
 
-    it('should handle API errors correctly', async () => {
-      (apiClient as any).parseErrorResponse = jest
-        .fn()
-        .mockResolvedValue(new NotFoundError('Resource not found'));
-
-      (global.fetch as jest.Mock).mockResolvedValueOnce({
+    it('maps a plain text error without retrying', async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({
         ok: false,
         status: 404,
-        headers: {
-          get: () => 'text/plain',
-        },
+        headers: { get: () => 'text/plain' },
         text: () => Promise.resolve('Resource not found'),
         json: () => Promise.reject(new Error('Not JSON')),
       });
 
-      let error: Error | null = null;
-      try {
-        await apiClient.getSecrets('workspace123', '/path', 'dev');
-      } catch (err) {
-        error = err as Error;
-      }
-
-      expect(error).toBeDefined();
+      await expect(
+        apiClient.getSecrets('workspace123', '/path', 'dev'),
+      ).rejects.toMatchObject({
+        name: 'NotFoundError',
+        message: 'Infisical API error (404): Resource not found',
+      });
+      // One call for the secrets and one for the folders
+      expect(global.fetch).toHaveBeenCalledTimes(2);
     });
+  });
+
+  describe('error mapping and retries', () => {
+    const secretData = {
+      secretKey: 'KEY',
+      secretValue: 'value',
+      secretPath: '/',
+      workspaceId: 'workspace123',
+      environment: 'dev',
+    };
+    const fetchMock = global.fetch as jest.Mock;
+
+    beforeEach(() => {
+      apiClient = new InfisicalApiClient({ config: mockConfig, logger });
+      (apiClient as any).retryDelay = 0;
+    });
+
+    it.each([
+      [400, 'InputError'],
+      [422, 'InputError'],
+      [403, 'NotAllowedError'],
+      [404, 'NotFoundError'],
+      [409, 'ConflictError'],
+      [401, 'Error'],
+    ])('maps a JSON %i to %s without retrying', async (status, name) => {
+      fetchMock.mockResolvedValue(
+        errorResponse(status, 'identity not in project'),
+      );
+
+      await expect(
+        apiClient.getEnvironments('workspace123'),
+      ).rejects.toMatchObject({
+        name,
+        message: `Infisical API error (${status}): identity not in project`,
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('marks a 403 from Infisical so it is not mistaken for a missing permission', async () => {
+      fetchMock.mockResolvedValue(errorResponse(403, 'not a project member'));
+
+      await expect(
+        apiClient.getEnvironments('workspace123'),
+      ).rejects.toMatchObject({
+        name: 'NotAllowedError',
+        reason: 'infisical-forbidden',
+      });
+    });
+
+    it('retries a read on 5xx and then fails with ServiceUnavailableError', async () => {
+      fetchMock.mockResolvedValue(errorResponse(500));
+
+      await expect(
+        apiClient.getEnvironments('workspace123'),
+      ).rejects.toMatchObject({ name: 'ServiceUnavailableError' });
+      // The first attempt plus three retries
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+    });
+
+    it('returns the result when a retried read succeeds', async () => {
+      fetchMock
+        .mockResolvedValueOnce(errorResponse(503))
+        .mockResolvedValueOnce(
+          jsonResponse({ workspace: { id: 'w', environments: [] } }),
+        );
+
+      await expect(
+        apiClient.getEnvironments('workspace123'),
+      ).resolves.toMatchObject({ id: 'w' });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('retries a read on a network error', async () => {
+      fetchMock
+        .mockRejectedValueOnce(new TypeError('fetch failed'))
+        .mockResolvedValueOnce(
+          jsonResponse({ workspace: { id: 'w', environments: [] } }),
+        );
+
+      await expect(
+        apiClient.getEnvironments('workspace123'),
+      ).resolves.toMatchObject({ id: 'w' });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('retries a read when the connection drops while reading the body', async () => {
+      fetchMock
+        .mockResolvedValueOnce({
+          ...jsonResponse({}),
+          json: () => Promise.reject(new TypeError('terminated')),
+        })
+        .mockResolvedValueOnce(
+          jsonResponse({ workspace: { id: 'w', environments: [] } }),
+        );
+
+      await expect(
+        apiClient.getEnvironments('workspace123'),
+      ).resolves.toMatchObject({ id: 'w' });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not retry a write when reading the body fails', async () => {
+      fetchMock.mockResolvedValue({
+        ...jsonResponse({}),
+        json: () => Promise.reject(new TypeError('terminated')),
+      });
+
+      await expect(apiClient.createSecret(secretData)).rejects.toThrow(
+        'terminated',
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not retry a write on a network error', async () => {
+      fetchMock.mockRejectedValue(new TypeError('fetch failed'));
+
+      await expect(apiClient.createSecret(secretData)).rejects.toThrow(
+        'fetch failed',
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([500, 503, 403])('does not retry a write on %i', async status => {
+      fetchMock.mockResolvedValue(errorResponse(status));
+
+      await expect(apiClient.createSecret(secretData)).rejects.toBeDefined();
+      await expect(
+        apiClient.updateSecret(secretData, 'KEY'),
+      ).rejects.toBeDefined();
+      await expect(
+        apiClient.deleteSecret('KEY', secretData),
+      ).rejects.toBeDefined();
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+
+    it('retries a write when rate limited', async () => {
+      fetchMock
+        .mockResolvedValueOnce(errorResponse(429))
+        .mockResolvedValueOnce(jsonResponse({ secret: { secretKey: 'KEY' } }));
+
+      await expect(apiClient.createSecret(secretData)).resolves.toMatchObject({
+        secretKey: 'KEY',
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    describe('with universal auth', () => {
+      const loginResponse = jsonResponse({
+        accessToken: 'token',
+        expiresIn: 3600,
+      });
+      const isLogin = (call: unknown[]) =>
+        String(call[0]).endsWith('/v1/auth/universal-auth/login');
+
+      beforeEach(() => {
+        apiClient = new InfisicalApiClient({
+          config: mockClientCredentialsConfig,
+          logger,
+        });
+        (apiClient as any).retryDelay = 0;
+      });
+
+      it('logs in again once on 401 and then gives up', async () => {
+        fetchMock.mockImplementation(async (url: string) =>
+          url.endsWith('/login') ? loginResponse : errorResponse(401),
+        );
+
+        await expect(apiClient.getEnvironments('workspace123')).rejects.toThrow(
+          'Infisical API error (401)',
+        );
+
+        const calls = fetchMock.mock.calls;
+        expect(calls.filter(isLogin)).toHaveLength(2);
+        expect(calls.filter(call => !isLogin(call))).toHaveLength(2);
+      });
+
+      describe('token expiry margin', () => {
+        const NOW = 1_700_000_000_000;
+        let now: jest.SpyInstance;
+
+        // Logs in with a token that lives `expiresIn` seconds, makes a
+        // request, moves the clock and makes another one
+        async function loginsAfter(expiresIn: number, elapsedSeconds: number) {
+          fetchMock.mockImplementation(async (url: string) =>
+            url.endsWith('/login')
+              ? jsonResponse({ accessToken: 'token', expiresIn })
+              : jsonResponse({ workspace: { environments: [] } }),
+          );
+
+          await apiClient.getEnvironments('workspace123');
+          now.mockReturnValue(NOW + elapsedSeconds * 1000);
+          await apiClient.getEnvironments('workspace123');
+
+          return fetchMock.mock.calls.filter(isLogin).length;
+        }
+
+        beforeEach(() => {
+          // setupTests stubs Date.now, but resetAllMocks clears that stub
+          // between tests
+          now = jest.spyOn(Date, 'now').mockReturnValue(NOW);
+        });
+
+        it('refreshes a long-lived token 5 minutes before it expires', async () => {
+          await expect(loginsAfter(3600, 3299)).resolves.toBe(1);
+        });
+
+        it('logs in again once the 5 minute margin is reached', async () => {
+          await expect(loginsAfter(3600, 3300)).resolves.toBe(2);
+        });
+
+        it.each([
+          [300, 239],
+          [60, 47],
+        ])(
+          'reuses a token that lives %i seconds for 80%% of its lifetime',
+          async (expiresIn, elapsedSeconds) => {
+            await expect(loginsAfter(expiresIn, elapsedSeconds)).resolves.toBe(
+              1,
+            );
+          },
+        );
+
+        it.each([
+          [300, 240],
+          [60, 48],
+        ])(
+          'logs in again when a token that lives %i seconds is 80%% through',
+          async (expiresIn, elapsedSeconds) => {
+            await expect(loginsAfter(expiresIn, elapsedSeconds)).resolves.toBe(
+              2,
+            );
+          },
+        );
+      });
+
+      it('does not retry a failed login', async () => {
+        fetchMock.mockResolvedValue({
+          ...errorResponse(401),
+          text: () => Promise.resolve('Invalid credentials'),
+        });
+
+        await expect(apiClient.getEnvironments('workspace123')).rejects.toThrow(
+          'Failed to authenticate: 401',
+        );
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+      });
+    });
+  });
+
+  describe('URL path segments', () => {
+    beforeEach(() => {
+      apiClient = new InfisicalApiClient({ config: mockConfig, logger });
+      (global.fetch as jest.Mock).mockResolvedValue(
+        jsonResponse({ secret: { id: 'id', key: 'key', value: 'value' } }),
+      );
+    });
+
+    function requestedUrl(): URL {
+      return new URL((global.fetch as jest.Mock).mock.calls[0][0]);
+    }
+
+    it('encodes slashes and query characters in the secret key', async () => {
+      await apiClient.getSecretById(
+        'workspace123',
+        '../../../v1/workspace/other?workspaceId=other&x=',
+        { environment: 'dev', path: '/api' },
+      );
+
+      const url = requestedUrl();
+      expect(url.pathname).toBe(
+        '/api/v3/secrets/raw/..%2F..%2F..%2Fv1%2Fworkspace%2Fother%3FworkspaceId%3Dother%26x%3D',
+      );
+      expect(url.searchParams.getAll('workspaceId')).toEqual(['workspace123']);
+    });
+
+    it('encodes the key of a new secret', async () => {
+      await apiClient.createSecret({
+        secretKey: 'a/b',
+        secretValue: 'v',
+        workspaceId: 'workspace123',
+        secretPath: '/',
+        environment: 'dev',
+      });
+
+      expect(requestedUrl().pathname).toBe('/api/v3/secrets/raw/a%2Fb');
+    });
+
+    it('encodes the workspace ID', async () => {
+      (global.fetch as jest.Mock).mockResolvedValue(
+        jsonResponse({ workspace: { id: 'w', environments: [] } }),
+      );
+
+      await apiClient.getEnvironments('../secrets/raw');
+
+      expect(requestedUrl().pathname).toBe(
+        '/api/v1/workspace/..%2Fsecrets%2Fraw',
+      );
+    });
+
+    it.each(['.', '..', ''])(
+      'rejects the dot segment %j without calling Infisical',
+      async secretId => {
+        await expect(
+          apiClient.deleteSecret(secretId, {
+            workspaceId: 'workspace123',
+            secretPath: '/',
+            environment: 'dev',
+          }),
+        ).rejects.toThrow(InputError);
+        await expect(
+          apiClient.updateSecret(
+            {
+              secretKey: 'KEY',
+              secretValue: 'v',
+              workspaceId: 'workspace123',
+              secretPath: '/',
+              environment: 'dev',
+            },
+            secretId,
+          ),
+        ).rejects.toThrow(InputError);
+        expect(global.fetch).not.toHaveBeenCalled();
+      },
+    );
   });
 
   describe('client credentials authentication', () => {
@@ -365,6 +661,128 @@ describe('InfisicalApiClient', () => {
       await expect(
         apiClient.deleteSecret('secret1', secretData),
       ).resolves.not.toThrow();
+    });
+  });
+
+  describe('buildUserAgent', () => {
+    it('returns the product token without context', () => {
+      expect(buildUserAgent()).toBe('backstage-plugin-infisical');
+      expect(buildUserAgent({})).toBe('backstage-plugin-infisical');
+    });
+
+    it('includes the Backstage user and entity', () => {
+      expect(
+        buildUserAgent({
+          userRef: 'user:default/jane',
+          entityRef: 'component:default/api',
+        }),
+      ).toBe(
+        'backstage-plugin-infisical (user=user:default/jane; entity=component:default/api)',
+      );
+    });
+
+    it('drops characters that would break the header', () => {
+      expect(
+        buildUserAgent({ userRef: 'user:default/jáne\r\n(x); y' }),
+      ).toBe('backstage-plugin-infisical (user=user:default/jnex y)');
+    });
+  });
+
+  describe('identities and request context', () => {
+    const workspaceResponse = {
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          workspace: {
+            id: 'workspace-1',
+            name: 'Test Project',
+            slug: 'test-project',
+            environments: [],
+          },
+        }),
+      headers: { get: () => 'application/json' },
+    };
+
+    it('sends the Backstage user and entity in the User-Agent header', async () => {
+      apiClient = new InfisicalApiClient({ config: mockConfig, logger });
+      (global.fetch as jest.Mock).mockResolvedValueOnce(workspaceResponse);
+
+      await apiClient.getEnvironments('workspace-1', {
+        userRef: 'user:default/jane',
+        entityRef: 'component:default/api',
+      });
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://test-api.example.com/api/v1/workspace/workspace-1',
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: 'Bearer test-api-token',
+            'User-Agent':
+              'backstage-plugin-infisical (user=user:default/jane; entity=component:default/api)',
+          }),
+        }),
+      );
+    });
+
+    it('logs in with the credentials of the given identity', async () => {
+      // setupTests stubs Date.now, but resetAllMocks clears that stub between
+      // tests; pin it so the fresh token is not considered expired.
+      jest.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+
+      apiClient = new InfisicalApiClient({
+        config: mockConfig,
+        logger,
+        identityName: 'payments-dev',
+        authentication: new ConfigReader({
+          universalAuth: {
+            clientId: 'payments-dev-id',
+            clientSecret: 'payments-dev-secret',
+          },
+        }),
+      });
+
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({ accessToken: 'payments-dev-token', expiresIn: 3600 }),
+        })
+        .mockResolvedValueOnce(workspaceResponse);
+
+      await apiClient.getEnvironments('workspace-1');
+
+      const [loginUrl, loginInit] = (global.fetch as jest.Mock).mock.calls[0];
+      expect(loginUrl).toBe(
+        'https://test-api.example.com/api/v1/auth/universal-auth/login',
+      );
+      expect(JSON.parse(loginInit.body)).toEqual({
+        clientId: 'payments-dev-id',
+        clientSecret: 'payments-dev-secret',
+      });
+
+      const [, requestInit] = (global.fetch as jest.Mock).mock.calls[1];
+      expect(requestInit.headers.Authorization).toBe(
+        'Bearer payments-dev-token',
+      );
+      expect(requestInit.headers['User-Agent']).toBe(
+        'backstage-plugin-infisical',
+      );
+    });
+
+    it('names the identity when its credentials are missing', () => {
+      expect(
+        () =>
+          new InfisicalApiClient({
+            config: mockConfig,
+            logger,
+            identityName: 'broken',
+            authentication: new ConfigReader({}),
+          }),
+      ).toThrow(
+        "Missing Infisical Authentication credentials for identity 'broken'",
+      );
     });
   });
 });

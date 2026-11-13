@@ -1,0 +1,223 @@
+import { BackstageCredentials } from '@backstage/backend-plugin-api';
+import { parseEntityRef } from '@backstage/catalog-model';
+import { InputError, NotFoundError } from '@backstage/errors';
+import { CatalogService } from '@backstage/plugin-catalog-node';
+import {
+  INFISICAL_ENVIRONMENT_ANNOTATION,
+  INFISICAL_FORBIDDEN_REASONS,
+  INFISICAL_IDENTITY_ANNOTATION,
+  INFISICAL_PROJECT_ANNOTATION,
+  INFISICAL_SECRET_PATH_ANNOTATION,
+  getInfisicalIdentityAnnotation,
+  normalizeSecretPath,
+  parseSecretPathAnnotation,
+} from '@infisical/backstage-plugin-infisical-common';
+import { forbiddenError } from './errors';
+
+/**
+ * The Infisical coordinates derived from an entity's annotations and the
+ * caller's request, after all restrictions have been enforced.
+ * @public
+ */
+export interface ResolvedEntityAccess {
+  /** The Infisical project (workspace) ID from `infisical/projectId` */
+  workspaceId: string;
+  /** The environment to use, if any */
+  environment?: string;
+  /** The normalized secret path to use */
+  path: string;
+  /**
+   * Name of the machine identity from `infisical.identities` to use, or
+   * `undefined` for the default `infisical.authentication` identity
+   */
+  identity?: string;
+  /**
+   * Names of the identities from the entity's `infisical/identity.<environment>`
+   * annotations. Used to list the project's environments when no identity
+   * could be picked without knowing the environment.
+   */
+  environmentIdentities: string[];
+}
+
+/**
+ * Resolves the secret path a caller may access given the entity's
+ * `infisical/secretPath` annotation.
+ *
+ * - No annotation: any path is allowed, defaulting to `/`.
+ * - Annotation without "+": only that exact path is allowed.
+ * - Annotation with "+": that path and any subfolder is allowed.
+ * @public
+ */
+export function resolveSecretPath(
+  annotation: string | undefined,
+  requested: string | undefined,
+): string {
+  const restriction = parseSecretPathAnnotation(annotation);
+  if (!restriction) {
+    return normalizeSecretPath(requested);
+  }
+
+  const { basePath, allowSubfolders } = restriction;
+
+  if (requested === undefined || requested === '') {
+    return basePath;
+  }
+
+  const requestedPath = normalizeSecretPath(requested);
+
+  if (requestedPath === basePath) {
+    return requestedPath;
+  }
+
+  if (
+    allowSubfolders &&
+    (basePath === '/' || requestedPath.startsWith(`${basePath}/`))
+  ) {
+    return requestedPath;
+  }
+
+  throw forbiddenError(
+    INFISICAL_FORBIDDEN_REASONS.entityRestriction,
+    `Access to secret path '${requestedPath}' is not allowed for this entity`,
+  );
+}
+
+/**
+ * Resolves the environment a caller may use given the entity's
+ * `infisical/environment` annotation.
+ *
+ * The requested value is trimmed first. The result is used to look up the
+ * `infisical/identity.<environment>` annotation, so a padded value such as
+ * `" prod"` must not be able to miss it and fall back to another identity.
+ * @public
+ */
+export function resolveEnvironment(
+  annotation: string | undefined,
+  requested: string | undefined,
+): string | undefined {
+  const locked = annotation?.trim();
+  const wanted = requested?.trim();
+  if (!locked) {
+    return wanted || undefined;
+  }
+  if (wanted && wanted !== locked) {
+    throw forbiddenError(
+      INFISICAL_FORBIDDEN_REASONS.entityRestriction,
+      `Access to environment '${wanted}' is not allowed for this entity`,
+    );
+  }
+  return locked;
+}
+
+/**
+ * Resolves which machine identity an entity uses for a request.
+ *
+ * - `infisical/identity.<environment>` wins when the request targets that environment.
+ * - Otherwise `infisical/identity` is used.
+ * - Without either annotation the default identity is used (`undefined`).
+ * @public
+ */
+export function resolveIdentityName(
+  annotations: Record<string, string>,
+  environment: string | undefined,
+): string | undefined {
+  const perEnvironment = environment
+    ? annotations[getInfisicalIdentityAnnotation(environment)]?.trim()
+    : undefined;
+  if (perEnvironment) {
+    return perEnvironment;
+  }
+  return annotations[INFISICAL_IDENTITY_ANNOTATION]?.trim() || undefined;
+}
+
+/**
+ * Returns the distinct identities named by an entity's
+ * `infisical/identity.<environment>` annotations, in annotation order.
+ * @public
+ */
+export function resolveEnvironmentIdentityNames(
+  annotations: Record<string, string>,
+): string[] {
+  const prefix = `${INFISICAL_IDENTITY_ANNOTATION}.`;
+  const names = Object.entries(annotations)
+    .filter(([key]) => key.startsWith(prefix))
+    .map(([, value]) => value?.trim())
+    .filter(Boolean);
+  return [...new Set(names)];
+}
+
+/**
+ * Validates that a value is a well-formed entity reference.
+ * @public
+ */
+export function validateEntityRef(entityRef: unknown): string {
+  if (!entityRef || typeof entityRef !== 'string') {
+    throw new InputError('entityRef is required');
+  }
+  try {
+    parseEntityRef(entityRef);
+  } catch {
+    throw new InputError(`Invalid entityRef '${entityRef}'`);
+  }
+  return entityRef;
+}
+
+/**
+ * Options for {@link resolveEntityAccess}.
+ * @public
+ */
+export interface ResolveEntityAccessOptions {
+  catalog: CatalogService;
+  credentials: BackstageCredentials;
+  entityRef: string;
+  requestedEnvironment?: string;
+  requestedPath?: string;
+}
+
+/**
+ * Looks up the entity as the caller and derives the Infisical project,
+ * environment, path and machine identity from its annotations, enforcing the
+ * environment lock and path restrictions.
+ * @public
+ */
+export async function resolveEntityAccess(
+  options: ResolveEntityAccessOptions,
+): Promise<ResolvedEntityAccess> {
+  const {
+    catalog,
+    credentials,
+    entityRef,
+    requestedEnvironment,
+    requestedPath,
+  } = options;
+
+  const entity = await catalog.getEntityByRef(entityRef, { credentials });
+
+  const annotations = entity?.metadata.annotations ?? {};
+  const workspaceId = annotations[INFISICAL_PROJECT_ANNOTATION];
+
+  if (!entity || !workspaceId) {
+    throw new NotFoundError(
+      `Entity '${entityRef}' was not found or has no ${INFISICAL_PROJECT_ANNOTATION} annotation`,
+    );
+  }
+
+  const environment = resolveEnvironment(
+    annotations[INFISICAL_ENVIRONMENT_ANNOTATION],
+    requestedEnvironment,
+  );
+  const path = resolveSecretPath(
+    annotations[INFISICAL_SECRET_PATH_ANNOTATION],
+    requestedPath,
+  );
+
+  const identity = resolveIdentityName(annotations, environment);
+
+  return {
+    workspaceId,
+    environment,
+    path,
+    identity,
+    environmentIdentities: resolveEnvironmentIdentityNames(annotations),
+  };
+}

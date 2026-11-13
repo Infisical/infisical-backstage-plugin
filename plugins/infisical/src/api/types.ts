@@ -74,8 +74,11 @@ export interface InfisicalWorkspace {
 export interface InfisicalSecretFormValues {
   /** Secret key name */
   secretKey: string;
-  /** Secret value */
-  secretValue: string;
+  /**
+   * Secret value. Required when creating a secret. When updating, omit it to
+   * keep the current value (e.g. when the user may not read values).
+   */
+  secretValue?: string;
   /** Optional comment for the secret */
   secretComment?: string;
 }

@@ -3,7 +3,7 @@
  * Main component for displaying and managing Infisical secrets
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Button,
   Dialog,
@@ -45,6 +45,17 @@ import {
   InfoCard,
 } from '@backstage/core-components';
 import { useApi, alertApiRef, errorApiRef, ErrorApiError } from '@backstage/core-plugin-api';
+import { ResponseError } from '@backstage/errors';
+import { usePermission } from '@backstage/plugin-permission-react';
+import { ResourcePermission } from '@backstage/plugin-permission-common';
+import {
+  INFISICAL_FORBIDDEN_REASONS,
+  infisicalSecretCreatePermission,
+  infisicalSecretDeletePermission,
+  infisicalSecretUpdatePermission,
+  infisicalSecretValueReadPermission,
+  parseSecretPathAnnotation,
+} from '@infisical/backstage-plugin-infisical-common';
 import { infisicalApiRef } from '../../api/InfisicalClient/InfisicalClient';
 import { InfisicalSecret, InfisicalSecretFormValues, InfisicalFolder, InfisicalEnvironment } from '../../api/types';
 import { SecretDialog, DialogMode } from '../SecretDialog';
@@ -217,10 +228,87 @@ const useStyles = makeStyles(theme => ({
 }));
 
 export interface EntityInfisicalSecretsContentProps {
-  workspaceId: string;
+  /** Reference of the catalog entity the secrets are accessed through */
+  entityRef: string;
+  /** Environment the entity is locked to (from the `infisical/environment` annotation) */
   environment?: string;
+  /** Secret path restriction (from the `infisical/secretPath` annotation) */
   secretPath?: string;
 }
+
+/**
+ * Returns true when an error is a 403 response from the backend.
+ */
+const isForbidden = (err: unknown): boolean =>
+  err instanceof ResponseError && err.response.status === 403;
+
+/**
+ * Whether the current user may perform `permission` on the entity. Only used
+ * to hide controls: the backend enforces permissions. While the check is
+ * still loading this returns false, so the control stays hidden.
+ */
+const useAllowed = (permission: ResourcePermission, entityRef: string) =>
+  usePermission({ permission, resourceRef: entityRef }).allowed;
+
+/**
+ * Reads the navigation limits from the `infisical/secretPath` annotation.
+ * An invalid annotation imposes no limit here; the backend rejects every
+ * request for it and the error is shown instead.
+ */
+function navigationLimits(secretPath?: string) {
+  let restriction;
+  try {
+    restriction = parseSecretPathAnnotation(secretPath);
+  } catch {
+    restriction = undefined;
+  }
+  return {
+    basePath: restriction?.basePath ?? '/',
+    allowNavigation: restriction?.allowSubfolders ?? true,
+  };
+}
+
+const PERMISSION_DENIED_TITLE = "You don't have permission to view these secrets";
+const PERMISSION_DENIED_DESCRIPTION =
+  'Ask the owner of this entity or your Backstage administrator for access to Infisical secrets.';
+const RESTRICTED_TITLE = "This entity can't access these secrets";
+const MISCONFIGURED_TITLE = 'Infisical access is not set up correctly for this entity';
+const MISCONFIGURED_HELP =
+  'Ask your Backstage administrator to check the Infisical configuration.';
+
+const forbiddenReason = (err: unknown): string | undefined => {
+  if (!isForbidden(err)) {
+    return undefined;
+  }
+  const reason = (err as ResponseError).body?.error?.reason;
+  return typeof reason === 'string' ? reason : undefined;
+};
+
+const isConfigurationProblem = (err: unknown): boolean => {
+  const reason = forbiddenReason(err);
+  return (
+    reason === INFISICAL_FORBIDDEN_REASONS.entityRestriction ||
+    reason === INFISICAL_FORBIDDEN_REASONS.identityNotAllowed ||
+    reason === INFISICAL_FORBIDDEN_REASONS.infisicalForbidden
+  );
+};
+
+const forbiddenMessage = (err: unknown): { title: string; description: string } => {
+  if (!isConfigurationProblem(err)) {
+    return {
+      title: PERMISSION_DENIED_TITLE,
+      description: PERMISSION_DENIED_DESCRIPTION,
+    };
+  }
+  const { message } = err as ResponseError;
+  if (forbiddenReason(err) === INFISICAL_FORBIDDEN_REASONS.entityRestriction) {
+    return { title: RESTRICTED_TITLE, description: message };
+  }
+  return {
+    title: MISCONFIGURED_TITLE,
+    description: `${message.replace(/\.$/, '')}. ${MISCONFIGURED_HELP}`,
+  };
+};
 
 /**
  * Create a type for the combined data
@@ -235,13 +323,22 @@ type TableItem = (InfisicalSecret | InfisicalFolder) & {
 };
 
 /**
- * Component that displays and manages Infisical secrets for a specific workspace
+ * Component that displays and manages the Infisical secrets linked to an entity
  */
-export const EntityInfisicalSecretsContent = ({ workspaceId, environment, secretPath }: EntityInfisicalSecretsContentProps) => {
+export const EntityInfisicalSecretsContent = ({ entityRef, environment, secretPath }: EntityInfisicalSecretsContentProps) => {
   const classes = useStyles();
   const infisicalApi = useApi(infisicalApiRef);
   const alertApi = useApi(alertApiRef);
   const errorApi = useApi(errorApiRef);
+
+  const canCreate = useAllowed(infisicalSecretCreatePermission, entityRef);
+  const canUpdate = useAllowed(infisicalSecretUpdatePermission, entityRef);
+  const canDelete = useAllowed(infisicalSecretDeletePermission, entityRef);
+  const canReadValues = useAllowed(infisicalSecretValueReadPermission, entityRef);
+
+  // The 403 the backend answered listing environments with, if any. A denied
+  // secrets listing surfaces as the `error` of the secrets fetch instead.
+  const [environmentsDenied, setEnvironmentsDenied] = useState<unknown>();
 
   // State for environments
   const [environments, setEnvironments] = useState<InfisicalEnvironment[]>([]);
@@ -249,14 +346,15 @@ export const EntityInfisicalSecretsContent = ({ workspaceId, environment, secret
   const [loadingEnvironments, setLoadingEnvironments] = useState(true);
   const [cardTitle, setCardTitle] = useState<string>("Infisical Secrets");
 
-  // Base path that cannot be navigated above (derived from secretPath prop)
-  const [basePath, setBasePath] = useState('/');
+  // Base path that cannot be navigated above, and whether subfolders can be
+  // opened at all, from the secretPath annotation
+  const { basePath, allowNavigation } = useMemo(
+    () => navigationLimits(secretPath),
+    [secretPath],
+  );
 
   // State for current path navigation
-  const [currentPath, setCurrentPath] = useState('/');
-
-  // Navigation control based on secretPath parameter
-  const [allowNavigation, setAllowNavigation] = useState(true);
+  const [currentPath, setCurrentPath] = useState(basePath);
 
   // Determine if environment is locked (provided as prop)
   const isEnvironmentLocked = Boolean(environment);
@@ -280,46 +378,24 @@ export const EntityInfisicalSecretsContent = ({ workspaceId, environment, secret
   const [secretValues, setSecretValues] = useState<Record<string, string>>({});
   const [loadingSecretValues, setLoadingSecretValues] = useState<Record<string, boolean>>({});
 
-  // Initialize base path, current path, and navigation permissions based on secretPath prop
+  // Start over at the base path when the annotation changes
   useEffect(() => {
-    if (!secretPath) {
-      // No secretPath provided - allow full navigation
-      setAllowNavigation(true);
-      setBasePath('/');
-      setCurrentPath('/');
-      return;
-    }
-
-    if (secretPath.startsWith('+')) {
-      // secretPath starts with "+" - allow navigation, remove "+" prefix
-      setAllowNavigation(true);
-      const pathWithoutPlus = secretPath.slice(1);
-      const normalizedPath = pathWithoutPlus.startsWith('/') ? pathWithoutPlus : `/${pathWithoutPlus}`;
-      const cleanPath = normalizedPath.endsWith('/') && normalizedPath !== '/'
-        ? normalizedPath.slice(0, -1)
-        : normalizedPath;
-      
-      setBasePath(cleanPath);
-      setCurrentPath(cleanPath);
-    } else {
-      // secretPath provided without "+" - restrict navigation to current level only
-      setAllowNavigation(false);
-      const normalizedPath = secretPath.startsWith('/') ? secretPath : `/${secretPath}`;
-      const cleanPath = normalizedPath.endsWith('/') && normalizedPath !== '/'
-        ? normalizedPath.slice(0, -1)
-        : normalizedPath;
-
-      setBasePath(cleanPath);
-      setCurrentPath(cleanPath);
-    }
-  }, [secretPath]);
+    setCurrentPath(basePath);
+  }, [basePath]);
 
   // Fetch environments first
   useEffect(() => {
+    // Ignore responses that arrive after the entity or annotations changed
+    let stale = false;
+
     const fetchEnvironments = async () => {
       try {
         setLoadingEnvironments(true);
-        const { environments: envs, name } = await infisicalApi.getEnvironments(workspaceId);
+        // A previous lookup may have been denied (e.g. for another
+        // environment's identity); only this lookup's outcome counts
+        setEnvironmentsDenied(undefined);
+        const { environments: envs, name } = await infisicalApi.getEnvironments(entityRef);
+        if (stale) return;
         setEnvironments(envs);
         setCardTitle(name || '');
 
@@ -336,37 +412,45 @@ export const EntityInfisicalSecretsContent = ({ workspaceId, environment, secret
 
         setLoadingEnvironments(false);
       } catch (err) {
-        errorApi.post(err as ErrorApiError);
+        if (stale) return;
+        if (isForbidden(err)) {
+          setEnvironmentsDenied(err);
+        } else {
+          errorApi.post(err as ErrorApiError);
+        }
         setLoadingEnvironments(false);
       }
     };
 
     fetchEnvironments();
-  }, [infisicalApi, workspaceId, environment, errorApi]);
+
+    return () => {
+      stale = true;
+    };
+  }, [infisicalApi, entityRef, environment, errorApi]);
 
   // Fetch secrets from API
   const [{ value: { secrets, folders } = { secrets: [], folders: [] }, loading, error }, fetchSecrets] = useAsyncFn(async () => {
     if (!selectedEnvironment) return { secrets: [], folders: [] };
 
-    return await infisicalApi.getSecrets(workspaceId, {
+    return await infisicalApi.getSecrets(entityRef, {
       path: currentPath !== '/' ? currentPath : undefined,
       environment: selectedEnvironment,
       viewSecretValue: false
     });
-  }, [infisicalApi, workspaceId, currentPath, selectedEnvironment]);
+  }, [infisicalApi, entityRef, currentPath, selectedEnvironment]);
 
   // Load secrets when component mounts or currentPath or selectedEnvironment changes
   useEffect(() => {
     if (selectedEnvironment) {
-      fetchSecrets().catch(err => {
-        errorApi.post(err as ErrorApiError);
-      });
+      // useAsyncFn never rejects: failures land in `error` and render below
+      fetchSecrets();
 
       setSecretValues({});
       setVisibleValues({});
       setLoadingSecretValues({});
     }
-  }, [fetchSecrets, errorApi, workspaceId, currentPath, selectedEnvironment]);
+  }, [fetchSecrets, entityRef, currentPath, selectedEnvironment]);
 
   const handleOpenDialog = useCallback((mode: DialogMode, secret?: InfisicalSecret) => {
     setDialogMode(mode);
@@ -383,7 +467,7 @@ export const EntityInfisicalSecretsContent = ({ workspaceId, environment, secret
 
     try {
       if (dialogMode === 'create') {
-        await infisicalApi.createSecret(workspaceId, formValues, {
+        await infisicalApi.createSecret(entityRef, formValues, {
           path: currentPath !== '/' ? currentPath : undefined,
           environment: selectedEnvironment
         });
@@ -392,7 +476,7 @@ export const EntityInfisicalSecretsContent = ({ workspaceId, environment, secret
           severity: 'success',
         });
       } else if (dialogMode === 'edit' && selectedSecret) {
-        await infisicalApi.updateSecret(workspaceId, selectedSecret.secretKey, formValues, {
+        await infisicalApi.updateSecret(entityRef, selectedSecret.secretKey, formValues, {
           path: currentPath !== '/' ? currentPath : undefined,
           environment: selectedEnvironment
         });
@@ -423,7 +507,7 @@ export const EntityInfisicalSecretsContent = ({ workspaceId, environment, secret
     }
   }, [
     infisicalApi,
-    workspaceId,
+    entityRef,
     currentPath,
     selectedEnvironment,
     fetchSecrets,
@@ -447,7 +531,7 @@ export const EntityInfisicalSecretsContent = ({ workspaceId, environment, secret
     if (!secretToDelete || !selectedEnvironment) return;
 
     try {
-      await infisicalApi.deleteSecret(workspaceId, secretToDelete.secretKey, {
+      await infisicalApi.deleteSecret(entityRef, secretToDelete.secretKey, {
         path: currentPath !== '/' ? currentPath : undefined,
         environment: selectedEnvironment
       });
@@ -487,7 +571,7 @@ export const EntityInfisicalSecretsContent = ({ workspaceId, environment, secret
     infisicalApi,
     secretToDelete,
     selectedEnvironment,
-    workspaceId,
+    entityRef,
     errorApi
   ]);
 
@@ -501,7 +585,7 @@ export const EntityInfisicalSecretsContent = ({ workspaceId, environment, secret
 
     let secret: InfisicalSecret | null = null;
     try {
-      secret = await infisicalApi.getSecretByKey(workspaceId, secretKey, {
+      secret = await infisicalApi.getSecretByKey(entityRef, secretKey, {
         path: currentPath !== '/' ? currentPath : undefined,
         environment: selectedEnvironment,
       });
@@ -521,10 +605,13 @@ export const EntityInfisicalSecretsContent = ({ workspaceId, environment, secret
         [secretId]: true,
       }));
     } catch (err) {
-      alertApi.post({
-        message: 'Failed to load secret value',
-        severity: 'error',
-      });
+      let message = 'Failed to load secret value';
+      if (isConfigurationProblem(err)) {
+        message = (err as ResponseError).message;
+      } else if (isForbidden(err)) {
+        message = "You don't have permission to view this secret's value";
+      }
+      alertApi.post({ message, severity: 'error' });
     } finally {
       setLoadingSecretValues(prev => ({
         ...prev,
@@ -533,7 +620,7 @@ export const EntityInfisicalSecretsContent = ({ workspaceId, environment, secret
       // eslint-disable-next-line consistent-return, no-unsafe-finally
       return secret;
     }
-  }, [infisicalApi, workspaceId, currentPath, selectedEnvironment, alertApi]);
+  }, [infisicalApi, entityRef, currentPath, selectedEnvironment, alertApi]);
 
   const toggleValueVisibility = useCallback((secretId: string, secretKey?: string) => {
     if (!secretKey) return;
@@ -731,7 +818,9 @@ export const EntityInfisicalSecretsContent = ({ workspaceId, environment, secret
     if (currentPath === basePath) {
       return {
         title: "No secrets or folders found",
-        description: "This location doesn't have any secrets or folders yet. Create your first secret to get started."
+        description: canCreate
+          ? "This location doesn't have any secrets or folders yet. Create your first secret to get started."
+          : "This location doesn't have any secrets or folders yet."
       };
     }
 
@@ -739,7 +828,7 @@ export const EntityInfisicalSecretsContent = ({ workspaceId, environment, secret
       title: "Empty folder",
       description: "This folder doesn't have any secrets or subfolders yet."
     };
-  }, [currentPath, basePath, selectedEnvironment, searchText]);
+  }, [currentPath, basePath, selectedEnvironment, searchText, canCreate]);
 
   const columns: TableColumn<TableItem>[] = [
     {
@@ -800,20 +889,22 @@ export const EntityInfisicalSecretsContent = ({ workspaceId, environment, secret
                 '••••••••••••'
               )}
             </span>
-            <IconButton
-              size="small"
-              onClick={() => toggleValueVisibility(rowData.id, rowData.secretKey)}
-              aria-label={isVisible ? 'Hide value' : 'Show value'}
-              disabled={isLoading}
-            >
-              {isLoading ? (
-                <CircularProgress size={16} className={classes.loadingIconSmall} />
-              ) : isVisible ? (
-                <VisibilityOffIcon fontSize="small" />
-              ) : (
-                <VisibilityIcon fontSize="small" />
-              )}
-            </IconButton>
+            {canReadValues && (
+              <IconButton
+                size="small"
+                onClick={() => toggleValueVisibility(rowData.id, rowData.secretKey)}
+                aria-label={isVisible ? 'Hide value' : 'Show value'}
+                disabled={isLoading}
+              >
+                {isLoading ? (
+                  <CircularProgress size={16} className={classes.loadingIconSmall} />
+                ) : isVisible ? (
+                  <VisibilityOffIcon fontSize="small" />
+                ) : (
+                  <VisibilityIcon fontSize="small" />
+                )}
+              </IconButton>
+            )}
           </div>
         );
       },
@@ -830,25 +921,33 @@ export const EntityInfisicalSecretsContent = ({ workspaceId, environment, secret
           return null;
         }
 
+        if (!canUpdate && !canDelete) {
+          return null;
+        }
+
         return (
           <div className={classes.actions}>
-            <IconButton
-              aria-label="edit"
-              onClick={() => handleOpenDialog('edit', rowData as InfisicalSecret)}
-              size="small"
-              className={classes.actionButton}
-            >
-              <EditIcon fontSize="small" />
-            </IconButton>
-            <IconButton
-              aria-label="delete"
-              onClick={() => handleOpenDeleteDialog(rowData as InfisicalSecret)}
-              size="small"
-              color="secondary"
-              className={classes.actionButton}
-            >
-              <DeleteIcon fontSize="small" />
-            </IconButton>
+            {canUpdate && (
+              <IconButton
+                aria-label="edit"
+                onClick={() => handleOpenDialog('edit', rowData as InfisicalSecret)}
+                size="small"
+                className={classes.actionButton}
+              >
+                <EditIcon fontSize="small" />
+              </IconButton>
+            )}
+            {canDelete && (
+              <IconButton
+                aria-label="delete"
+                onClick={() => handleOpenDeleteDialog(rowData as InfisicalSecret)}
+                size="small"
+                color="secondary"
+                className={classes.actionButton}
+              >
+                <DeleteIcon fontSize="small" />
+              </IconButton>
+            )}
           </div>
         );
       },
@@ -863,8 +962,14 @@ export const EntityInfisicalSecretsContent = ({ workspaceId, environment, secret
     return <Progress />;
   }
 
-  if (error) {
-    return <ErrorPanel error={error} />;
+  // Without the environments there is no selector to keep, so this replaces
+  // the whole card
+  if (environmentsDenied) {
+    return (
+      <InfoCard title={cardTitle}>
+        <EmptyState missing="info" {...forbiddenMessage(environmentsDenied)} />
+      </InfoCard>
+    );
   }
 
   const emptyStateMessages = getEmptyStateMessages();
@@ -877,53 +982,67 @@ export const EntityInfisicalSecretsContent = ({ workspaceId, environment, secret
           <div className={classes.breadcrumbsContainer}>
             {getBreadcrumbs()}
           </div>
-          <div className={classes.actionsContainer}>
-            <div className={classes.searchContainer}>
-              <div className={classes.searchIcon}>
-                <SearchIcon />
-              </div>
-              <InputBase
-                placeholder="Filter"
-                classes={{
-                  root: classes.inputRoot,
-                  input: classes.inputInput,
-                }}
-                value={searchText}
-                onChange={(e) => setSearchText(e.target.value)}
-                inputProps={{ 'aria-label': 'filter secrets' }}
-              />
-              {searchText && (
-                <div
-                  className={classes.clearIcon}
-                  onClick={() => setSearchText('')}
-                  role="button"
-                  tabIndex={0}
-                  onKeyPress={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      setSearchText('');
-                    }
-                  }}
-                >
-                  <ClearIcon fontSize="small" />
+          {/* Nothing to filter or add to while the listing failed */}
+          {!error && (
+            <div className={classes.actionsContainer}>
+              <div className={classes.searchContainer}>
+                <div className={classes.searchIcon}>
+                  <SearchIcon />
                 </div>
+                <InputBase
+                  placeholder="Filter"
+                  classes={{
+                    root: classes.inputRoot,
+                    input: classes.inputInput,
+                  }}
+                  value={searchText}
+                  onChange={(e) => setSearchText(e.target.value)}
+                  inputProps={{ 'aria-label': 'filter secrets' }}
+                />
+                {searchText && (
+                  <div
+                    className={classes.clearIcon}
+                    onClick={() => setSearchText('')}
+                    role="button"
+                    tabIndex={0}
+                    onKeyPress={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        setSearchText('');
+                      }
+                    }}
+                  >
+                    <ClearIcon fontSize="small" />
+                  </div>
+                )}
+              </div>
+              {canCreate && (
+                <Button
+                  variant="contained"
+                  color="primary"
+                  size="small"
+                  startIcon={<AddIcon />}
+                  onClick={() => handleOpenDialog('create')}
+                  className={classes.addButton}
+                  disabled={!selectedEnvironment}
+                >
+                  ADD SECRET
+                </Button>
               )}
             </div>
-            <Button
-              variant="contained"
-              color="primary"
-              size="small"
-              startIcon={<AddIcon />}
-              onClick={() => handleOpenDialog('create')}
-              className={classes.addButton}
-              disabled={!selectedEnvironment}
-            >
-              ADD SECRET
-            </Button>
-          </div>
+          )}
         </div>
 
-        {/* Content table */}
-        {!selectedEnvironment || filteredData.length === 0 ? (
+        {/* Content table. A failed listing is shown here rather than in place
+            of the card, so the environment selector above stays usable */}
+        {error ? (
+          <Box mt={2}>
+            {isForbidden(error) ? (
+              <EmptyState missing="info" {...forbiddenMessage(error)} />
+            ) : (
+              <ErrorPanel error={error} />
+            )}
+          </Box>
+        ) : !selectedEnvironment || filteredData.length === 0 ? (
           <Box mt={2}>
             <EmptyState
               missing="data"
@@ -967,6 +1086,7 @@ export const EntityInfisicalSecretsContent = ({ workspaceId, environment, secret
           onClose={handleCloseDialog}
           onSave={handleSaveSecret}
           fetchSecretValue={fetchSecretValue}
+          canReadValue={canReadValues}
         />
 
         {/* Delete Confirmation Dialog */}

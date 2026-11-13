@@ -90,7 +90,7 @@ export interface InfisicalSecretCreateRequest {
   /** Type of the secret (e.g., "shared", "personal") */
   type?: string;
   /** Optional comment about the secret */
-  comment?: string;
+  secretComment?: string;
   /** Path where the secret should be stored */
   secretPath?: string;
   /** Workspace ID where the secret belongs */
@@ -100,12 +100,14 @@ export interface InfisicalSecretCreateRequest {
 }
 
 /**
- * Request body for updating a secret.
+ * Request body for updating a secret. Same as create, except that the value
+ * is optional: when it is omitted Infisical keeps the stored value.
  * @public
  */
 export interface InfisicalSecretUpdateRequest
-  extends InfisicalSecretCreateRequest {
-  // Same structure as create request currently
+  extends Omit<InfisicalSecretCreateRequest, 'secretValue'> {
+  /** New value of the secret; omit it to keep the current value */
+  secretValue?: string;
 }
 
 /**
@@ -176,3 +178,35 @@ export interface InfisicalSecretDeleteRequest {
   /** Path where the secret is stored */
   secretPath: string;
 }
+
+/**
+ * HTTP request body for creating a secret through the Backstage API. The
+ * project comes from the entity's annotations rather than the caller.
+ * @public
+ */
+export interface InfisicalSecretCreateHttpRequest
+  extends Omit<InfisicalSecretCreateRequest, 'workspaceId'> {
+  /** Reference of the catalog entity the secrets are accessed through */
+  entityRef: string;
+}
+
+/**
+ * HTTP request body for updating a secret through the Backstage API.
+ * `secretValue` is optional: omit it to keep the current value, e.g. when
+ * the caller may update the secret but not read its value.
+ * @public
+ */
+export interface InfisicalSecretUpdateHttpRequest
+  extends Omit<InfisicalSecretUpdateRequest, 'workspaceId'> {
+  /** Reference of the catalog entity the secrets are accessed through */
+  entityRef: string;
+}
+
+/**
+ * HTTP request body for deleting a secret through the Backstage API.
+ * @public
+ */
+export type InfisicalSecretDeleteHttpRequest = Pick<
+  InfisicalSecretCreateHttpRequest,
+  'entityRef' | 'environment' | 'secretPath'
+>;

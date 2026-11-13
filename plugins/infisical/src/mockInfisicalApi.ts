@@ -38,21 +38,21 @@ export function createMockInfisicalApi(): InfisicalApi {
     },
 
     getEnvironments: async (
-      workspaceId: string,
+      entityRef: string,
     ): Promise<GetEnvironmentsResponse> => {
-      if (!workspaceId) {
-        throw new Error('No workspace ID provided');
+      if (!entityRef) {
+        throw new Error('No entity reference provided');
       }
 
       return { environments };
     },
 
     getSecrets: async (
-      workspaceId: string,
+      entityRef: string,
       options?: { path?: string; environment?: string },
     ): Promise<GetSecretsResponse> => {
-      if (!workspaceId) {
-        throw new Error('No workspace ID provided');
+      if (!entityRef) {
+        throw new Error('No entity reference provided');
       }
 
       // Filter folders based on path
@@ -94,11 +94,15 @@ export function createMockInfisicalApi(): InfisicalApi {
     },
 
     createSecret: async (
-      workspaceId: string,
+      entityRef: string,
       secretData: InfisicalSecretFormValues
     ): Promise<InfisicalSecret> => {
-      if (!workspaceId) {
-        throw new Error('No workspace ID provided');
+      if (!entityRef) {
+        throw new Error('No entity reference provided');
+      }
+
+      if (!secretData.secretValue) {
+        throw new Error('Key and value are required fields');
       }
 
       const newSecret = createMockSecret(
@@ -117,12 +121,12 @@ export function createMockInfisicalApi(): InfisicalApi {
     },
 
     updateSecret: async (
-      workspaceId: string,
+      entityRef: string,
       secretId: string,
       secretData: InfisicalSecretFormValues
     ): Promise<InfisicalSecret> => {
-      if (!workspaceId) {
-        throw new Error('No workspace ID provided');
+      if (!entityRef) {
+        throw new Error('No entity reference provided');
       }
 
       // Find the secret to update
@@ -132,13 +136,15 @@ export function createMockInfisicalApi(): InfisicalApi {
         throw new Error(`Secret with ID ${secretId} not found`);
       }
 
-      // Create updated secret
+      // Create updated secret; an omitted value keeps the current one
+      const current = secrets[secretIndex];
+      const value = secretData.secretValue ?? current.secretValue;
       const updatedSecret = {
-        ...secrets[secretIndex],
+        ...current,
         key: secretData.secretKey,
         secretKey: secretData.secretKey,
-        value: secretData.secretValue,
-        secretValue: secretData.secretValue,
+        value,
+        secretValue: value,
         comment: secretData.secretComment,
         secretComment: secretData.secretComment,
         updatedAt: new Date().toISOString(),
@@ -158,11 +164,11 @@ export function createMockInfisicalApi(): InfisicalApi {
     },
 
     deleteSecret: async (
-      workspaceId: string,
+      entityRef: string,
       secretId: string
     ): Promise<void> => {
-      if (!workspaceId) {
-        throw new Error('No workspace ID provided');
+      if (!entityRef) {
+        throw new Error('No entity reference provided');
       }
 
       // Remove the secret
@@ -173,11 +179,11 @@ export function createMockInfisicalApi(): InfisicalApi {
     },
 
     getSecretByKey: async (
-      workspaceId: string,
+      entityRef: string,
       secretKey: string
     ): Promise<InfisicalSecret> => {
-      if (!workspaceId) {
-        throw new Error('No workspace ID provided');
+      if (!entityRef) {
+        throw new Error('No entity reference provided');
       }
 
       // Find the secret by key
