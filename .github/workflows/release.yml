@@ -1,0 +1,84 @@
+---
+name: Release Backstage plugins
+run-name: Release Backstage plugins ${{ github.ref_name }}
+
+on:
+  push:
+    tags:
+      - '*.*.*' # version, e.g. 1.0.0 or 1.1.0-rc.0
+
+permissions:
+  contents: read
+  id-token: write # Required for npm trusted publishing (OIDC)
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  npm:
+    name: Publish NPM
+    runs-on: ubuntu-22.04
+    env:
+      VERSION: ${{ github.ref_name }}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+
+      # Node 22 matches `engines`; the native modules in yarn.lock do not build on Node 24.
+      # The runner's global yarn hands off to .yarn/releases/yarn-4.4.1.cjs via yarnPath.
+      - name: Setup Node
+        uses: actions/setup-node@8f152de45cc393bb48ce5d89d36b731f54556e65 # v4.0.0
+        with:
+          node-version: '22.23.5'
+          cache: 'yarn'
+          cache-dependency-path: ./yarn.lock
+          registry-url: 'https://registry.npmjs.org'
+
+      # Prereleases (1.1.0-rc.0) go to the `next` dist-tag so they never become `latest`.
+      - name: Validate tag
+        run: |
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Tag '$VERSION' is not a semver version"
+            exit 1
+          fi
+          if [[ "$VERSION" == *-* ]]; then
+            echo "NPM_TAG=next" >> "$GITHUB_ENV"
+          else
+            echo "NPM_TAG=latest" >> "$GITHUB_ENV"
+          fi
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      # The frontend, backend and common plugins are always released together at the tag's version.
+      - name: Set plugin versions
+        run: yarn workspaces foreach --all --no-private exec npm pkg set version="$VERSION"
+
+      # Emits dist-types/, which `backstage-cli package build` bundles into dist/index.d.ts
+      - name: Type-check
+        run: yarn tsc
+
+      - name: Test
+        run: CI=true yarn test
+
+      - name: Build plugins
+        run: yarn backstage-cli repo build
+
+      # yarn pack runs the prepack/postpack scripts (publishConfig) and rewrites workspace:^ ranges.
+      # Each tarball lands at plugins/<dir>/package.tgz.
+      - name: Pack plugins
+        run: yarn workspaces foreach --all --no-private pack
+
+      - name: Upgrade npm (trusted publishing needs npm >= 11.5.1)
+        run: npm install -g npm@11.19.1
+
+      # Common goes first so the backend and frontend never depend on an unpublished version.
+      - name: Publish @infisical/backstage-plugin-infisical-common
+        run: npm publish ./plugins/infisical-common/package.tgz --access public --tag "$NPM_TAG"
+
+      - name: Publish @infisical/backstage-backend-plugin-infisical
+        run: npm publish ./plugins/infisical-backend/package.tgz --access public --tag "$NPM_TAG"
+
+      - name: Publish @infisical/backstage-plugin-infisical
+        run: npm publish ./plugins/infisical/package.tgz --access public --tag "$NPM_TAG"
